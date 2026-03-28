@@ -149,7 +149,9 @@ def _allowed_shifts_for(n: Nurse) -> list[str]:
     if n.is_night_dedicated:
         return ["N", "O"]
     if n.can_two_shift:
-        return ["D", "E", "N", "6D", "6N", "EDU", "O"]
+        return ["6D", "6N", "D", "E", "N", "O"]  # 2교대: 6D/6N 우선, D/E/N 허용
+    if n.is_part_time:
+        return ["D", "E", "O"]  # 주2일제: 낮/저녁만
     return ["D", "E", "N", "EDU", "O"]
 
 

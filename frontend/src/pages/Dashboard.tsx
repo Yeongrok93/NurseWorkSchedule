@@ -164,15 +164,21 @@ export default function Dashboard() {
                 {nurses.map(n => (
                   <div key={n.id} style={{
                     display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '6px 10px', borderRadius: 6, fontSize: 12,
+                    padding: '5px 10px', borderRadius: 6, fontSize: 12,
                     background: 'var(--color-background-secondary)',
                     border: '0.5px solid var(--color-border-tertiary)',
                   }}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: GROUP_COLOR[n.group], flexShrink: 0 }} />
-                    <span style={{ flex: 1, fontWeight: 500 }}>
-                      {n.is_night_dedicated ? '★ ' : n.can_two_shift ? '2 ' : n.is_part_time ? '파 ' : ''}
-                      {n.name}
-                    </span>
+                    <span style={{ flex: 1, fontWeight: 500 }}>{n.name}</span>
+                    {n.is_night_dedicated && (
+                      <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: '#4c1d95', color: '#fff', fontWeight: 600 }}>N전담</span>
+                    )}
+                    {n.can_two_shift && (
+                      <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: '#1e3a8a', color: '#fff', fontWeight: 600 }}>2교대</span>
+                    )}
+                    {n.is_part_time && (
+                      <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: '#92400e', color: '#fff', fontWeight: 600 }}>주2일</span>
+                    )}
                     <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>{GROUP_LABEL[n.group].slice(0,2)}</span>
                     <button onClick={() => setNurses(nurses.filter(x => x.id !== n.id))}
                       style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>

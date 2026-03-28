@@ -44,6 +44,7 @@ export interface NurseStats {
   total_work: number
   total_hours: number
   target_hours: number
+  remain: number
   request_rate: string
 }
 

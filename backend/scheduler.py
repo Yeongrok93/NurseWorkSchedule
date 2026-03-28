@@ -209,7 +209,11 @@ class NurseScheduler:
             elif n.is_night_dedicated:
                 self._shifts_for[n.id] = [Shift.N, Shift.O]
             elif n.can_two_shift:
-                self._shifts_for[n.id] = ALL_SHIFTS
+                # 2교대: 6D/6N 우선, 불가능 시 D/E/N도 허용 (soft penalty로 유도)
+                self._shifts_for[n.id] = [Shift.D6, Shift.N6, Shift.D, Shift.E, Shift.N, Shift.O]
+            elif n.is_part_time:
+                # 주2일제: 낮/저녁 근무만 (야간 금지)
+                self._shifts_for[n.id] = [Shift.D, Shift.E, Shift.O]
             else:
                 self._shifts_for[n.id] = WORK_3 + EDU_SHIFTS + [Shift.O]
 
@@ -219,6 +223,9 @@ class NurseScheduler:
     # ── 변수 생성 ─────────────────────────────────────────────────────────────
 
     def _build_variables(self):
+        # EDU 고정 리퀘스트가 있는 날만 모아둠
+        edu_days: dict = {n.id: {d for d, s in n.fixed_requests.items() if s == Shift.EDU}
+                          for n in self.nurses}
         for n in self.nurses:
             self.sv[n.id] = {}
             allowed = self._shifts_for[n.id]
@@ -231,6 +238,9 @@ class NurseScheduler:
                 for s in ALL_SHIFTS:
                     if s not in allowed:
                         self.model.add(self.sv[n.id][d][s] == 0)
+                # EDU는 고정 리퀘스트가 있는 날에만 허용 (solver 자유 배정 금지)
+                if Shift.EDU in allowed and d not in edu_days[n.id]:
+                    self.model.add(self.sv[n.id][d][Shift.EDU] == 0)
 
     # ── Hard: 기본 ────────────────────────────────────────────────────────────
 
@@ -314,21 +324,45 @@ class NurseScheduler:
     # ── Hard: 월 목표 근무시간 ────────────────────────────────────────────────
 
     def _c_monthly_work_hours(self):
+        """근무시간 상한선만 적용 (하한선 없음 → off_fairness로 균형 유지).
+        - 2교대: (평일수 × 8h) 이하 → 12h shift 기준 최대 약 14회
+        - 주2일제: 주2일 목표시간 이하
+        - 일반/N전담: 상한선 없음 (off_fairness + min_staff 로 자연 조정)"""
         for n in self.nurses:
-            target = self.part_time_target_h if n.is_part_time else self.target_h
+            if n.is_night_dedicated or (not n.can_two_shift and not n.is_part_time):
+                continue
             total_hours = sum(
                 SHIFT_HOURS[s] * self.sv[n.id][d][s]
                 for d in self.days
                 for s in ALL_WORK_WITH_EDU
             )
-            self.model.add(total_hours >= target - 8)
-            self.model.add(total_hours <= target)
+            if n.can_two_shift:
+                # 상한 = 해당 월 평일×8h (일반 목표시간과 동일 = 공휴일·주말 제외)
+                self.model.add(total_hours <= self.target_h)
+            elif n.is_part_time:
+                self.model.add(total_hours <= self.part_time_target_h)
+
+    # ── Hard: 최소 오프 보장 ─────────────────────────────────────────────────
+
+    def _c_min_off_guarantee(self):
+        """주말 + 법정공휴일 수만큼 오프 최소 보장.
+        N전담·2교대·주2일제 제외 (이미 별도 규칙으로 제어)."""
+        weekend_holiday_days = sum(
+            1 for d in self.days if self._dt(d) != "weekday"
+        )
+        for n in self.nurses:
+            if n.is_night_dedicated or n.can_two_shift or n.is_part_time:
+                continue
+            off_count = sum(self.sv[n.id][d][Shift.O] for d in self.days)
+            self.model.add(off_count >= weekend_holiday_days)
 
     # ── Hard: 오프 균등 (풀타임만) ────────────────────────────────────────────
 
     def _c_off_fairness_hard(self):
-        """월간 오프 일수 편차 ≤ 1 (주2일제 제외)."""
-        full_time = [n for n in self.nurses if not n.is_part_time]
+        """월간 오프 일수 편차 ≤ 1 (주2일제·2교대·N전담 제외).
+        N전담(14N+17O) / 2교대(12h×14일) 는 일반 3교대(8h×21일)와 off 일수가 달라 비교 불가."""
+        full_time = [n for n in self.nurses
+                     if not n.is_part_time and not n.can_two_shift and not n.is_night_dedicated]
         if not full_time:
             return
         off_counts = [
@@ -338,7 +372,28 @@ class NurseScheduler:
         min_off = self.model.new_int_var(0, self.num_days, "min_off_h")
         for oc in off_counts:
             self.model.add(oc >= min_off)
-            self.model.add(oc <= min_off + 1)
+            self.model.add(oc <= min_off + 2)  # ±2일 허용 (work_hours 제거 후 자유도 확보)
+
+    # ── Hard: 근무시간 형평성 (N전담·주2일제 제외, 2교대 포함) ──────────────────
+
+    def _c_work_hours_fairness(self):
+        """N전담·주2일제 제외 전원(2교대 포함) 월 총 근무시간 편차 ≤ 16h.
+        2교대는 12h 단위라 오프가 더 많지만 총 시간은 3교대와 동일 범위로 관리."""
+        nurses = [n for n in self.nurses
+                  if not n.is_night_dedicated and not n.is_part_time]
+        if len(nurses) < 2:
+            return
+        hours_vars = [
+            sum(
+                SHIFT_HOURS[s] * self.sv[n.id][d][s]
+                for d in self.days for s in ALL_WORK_WITH_EDU
+            )
+            for n in nurses
+        ]
+        min_h = self.model.new_int_var(0, self.num_days * 24, "min_work_h")
+        for h in hours_vars:
+            self.model.add(h >= min_h)
+            self.model.add(h <= min_h + 16)
 
     # ── Hard: shift 전환 금지 ─────────────────────────────────────────────────
 
@@ -466,9 +521,20 @@ class NurseScheduler:
                 if req.shift in self._shifts_for[n.id]:
                     rewards.append(cfg.w_request_fulfilled * self.sv[n.id][req.day][req.shift])
 
-        # ② 나이트 균등 (전담자·주2일제 제외)
+        # ① -b 2교대 간호사 D/E/N 사용 패널티 (6D/6N 우선 배정 유도)
+        for n in self.nurses:
+            if not n.can_two_shift:
+                continue
+            for d in self.days:
+                for s in [Shift.D, Shift.E, Shift.N]:
+                    penalties.append(20 * self.sv[n.id][d][s])
+
+        # ② 나이트 균등 (전담자·주2일제·2교대 제외)
+        # 2교대는 6D/6N 우선 → 평균 계산에서 제외
         non_ded = [n for n in self.nurses
-                   if not n.is_night_dedicated and not n.is_part_time]
+                   if not n.is_night_dedicated
+                   and not n.is_part_time
+                   and not n.can_two_shift]
         if non_ded:
             night_counts = [
                 sum(self.sv[n.id][d][Shift.N] for d in self.days)
@@ -537,9 +603,9 @@ class NurseScheduler:
                     self.model.add(expr <= 2).only_enforce_if(non_flag.negated())
                     penalties.append(cfg.w_non_pattern * non_flag)
 
-        # ⑥ N 7개 초과 페널티 (전담자 제외)
+        # ⑥ N 7개 초과 페널티 (전담자·2교대 제외)
         for n in self.nurses:
-            if n.is_night_dedicated:
+            if n.is_night_dedicated or n.can_two_shift:
                 continue
             night_total = sum(self.sv[n.id][d][Shift.N] for d in self.days)
             over7 = self.model.new_int_var(0, self.num_days, f"nover7_{n.id}")
@@ -547,10 +613,10 @@ class NurseScheduler:
             self.model.add(over7 >= 0)
             penalties.append(cfg.w_night_over7 * over7)
 
-        # ⑦ 나이트 블록 간격 10일 미만 페널티 (전담자 제외)
+        # ⑦ 나이트 블록 간격 10일 미만 페널티 (전담자·2교대 제외)
         gap = cfg.night_min_gap
         for n in self.nurses:
-            if n.is_night_dedicated:
+            if n.is_night_dedicated or n.can_two_shift:
                 continue
             for d in self.days:
                 if d+1 not in self.days:
@@ -600,6 +666,30 @@ class NurseScheduler:
                 self.model.add_abs_equality(abs_d, diff)
                 penalties.append(cfg.w_shift_dist * abs_d)
 
+        # ⑨ 리메인 형평성 (N전담·주2일제 제외, 2교대 포함)
+        remain_nurses = [n for n in self.nurses
+                         if not n.is_night_dedicated and not n.is_part_time]
+        if remain_nurses:
+            target_days = self.target_h // 8
+            remain_vars = []
+            for n in remain_nurses:
+                total_h = sum(
+                    SHIFT_HOURS[s] * self.sv[n.id][d][s]
+                    for d in self.days for s in ALL_WORK_WITH_EDU
+                )
+                # remain = total_h/8 - target_days  (범위: -31 ~ +31)
+                rem = self.model.new_int_var(-self.num_days, self.num_days, f"rem_{n.id}")
+                self.model.add(rem * 8 == total_h - target_days * 8)
+                remain_vars.append(rem)
+            avg_rem = self.model.new_int_var(-self.num_days, self.num_days, "avg_rem")
+            self.model.add(sum(remain_vars) == avg_rem * len(remain_nurses))
+            for i, rv in enumerate(remain_vars):
+                diff  = self.model.new_int_var(-self.num_days * 2, self.num_days * 2, f"rem_d_{i}")
+                abs_d = self.model.new_int_var(0, self.num_days * 2, f"rem_a_{i}")
+                self.model.add(diff == rv - avg_rem)
+                self.model.add_abs_equality(abs_d, diff)
+                penalties.append(cfg.w_hours_fairness * abs_d)
+
         return penalties, rewards
 
     # ── 메인 ─────────────────────────────────────────────────────────────────
@@ -618,7 +708,9 @@ class NurseScheduler:
         self._c_night_dedicated()
         self._c_charge_constraints()
         self._c_two_shift_pair()
-        self._c_monthly_work_hours()
+        self._c_monthly_work_hours()   # 상한선 전용 (2교대·주2일제만)
+        self._c_work_hours_fairness()  # 형평성: N전담·주2일제 제외, 2교대 포함, ≤16h
+        self._c_min_off_guarantee()
         self._c_forbidden_transitions()
         self._c_night_block_3shift()
         self._c_night_block_2shift()
@@ -641,14 +733,23 @@ class NurseScheduler:
         print(f"[Scheduler] 솔버 실행 (제한: {self.cfg.time_limit_seconds}초)...")
         status = solver.solve(self.model)
 
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            print(f"[Scheduler] ❌ 해 없음 (status={solver.status_name(status)})")
+        if status == cp_model.INFEASIBLE:
+            print(f"[Scheduler] [FAIL] INFEASIBLE")
             return None
 
-        print(f"[Scheduler] ✅ 완료 "
-              f"(status={solver.status_name(status)}, "
-              f"objective={solver.objective_value:.1f})")
-        return self._extract_result(solver)
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            print(f"[Scheduler] [OK] 완료 "
+                  f"(status={solver.status_name(status)}, "
+                  f"objective={solver.objective_value:.1f})")
+            return self._extract_result(solver)
+
+        # UNKNOWN = 시간초과. ResponseStats에 objective가 있으면 중간해 반환.
+        if solver.objective_value > 0:
+            print(f"[Scheduler] [WARN] 시간초과 - 최선의 해 반환 (objective={solver.objective_value:.1f})")
+            return self._extract_result(solver)
+
+        print(f"[Scheduler] [FAIL] 시간초과 - 해 없음")
+        return None
 
     def _extract_result(self, solver: cp_model.CpSolver) -> dict:
         schedule: dict[str, dict[int, str]] = {}
@@ -678,6 +779,9 @@ class NurseScheduler:
                 and solver.value(self.sv[n.id][req.day][req.shift]) == 1
             )
             target = self.part_time_target_h if n.is_part_time else self.target_h
+            # remain = 실제근무일수환산 - 표준근무일수
+            # (양수: 초과 근무, 음수: 오프 초과)
+            remain = (total_hours // 8) - (target // 8)
             stats[n.name] = {
                 "group": n.group.value,
                 "can_two_shift": n.can_two_shift,
@@ -686,6 +790,7 @@ class NurseScheduler:
                 "total_work": sum(cnt[s.value] for s in ALL_WORK_WITH_EDU),
                 "total_hours": total_hours,
                 "target_hours": target,
+                "remain": remain,
                 "request_rate": f"{fulfilled}/{len(n.preferred_requests)}",
             }
         return stats

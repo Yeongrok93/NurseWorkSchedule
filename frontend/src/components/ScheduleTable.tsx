@@ -71,7 +71,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
               </span>
             </th>
             <th colSpan={numDays} style={{ ...thBase(), background: '#1e293b' }} />
-            <th colSpan={10} style={{ ...thBase(), background: '#1e293b' }} />
+            <th colSpan={11} style={{ ...thBase(), background: '#1e293b' }} />
           </tr>
           {/* 날짜 헤더 */}
           <tr>
@@ -97,7 +97,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 </th>
               )
             })}
-            {[...STAT_SHIFTS, '근무','시간','요청'].map(h => (
+            {[...STAT_SHIFTS, '근무','시간','리메인','요청'].map(h => (
               <th key={h} style={{ ...thBase(), minWidth: 28 }}>{h}</th>
             ))}
           </tr>
@@ -198,6 +198,17 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 }}>
                   {st ? `${st.total_hours}h` : ''}
                 </td>
+                {/* 리메인 */}
+                <td style={{
+                  padding: '3px 4px', textAlign: 'center', fontSize: 11, fontWeight: 700,
+                  color: st == null ? 'var(--color-text-secondary)'
+                       : st.remain > 0 ? '#ea580c'
+                       : st.remain < 0 ? '#2563eb'
+                       : 'var(--color-text-secondary)',
+                  background: 'var(--color-background-secondary)',
+                }}>
+                  {st != null ? (st.remain > 0 ? `+${st.remain}` : st.remain === 0 ? '0' : `${st.remain}`) : ''}
+                </td>
                 {/* 요청 달성 */}
                 <td style={{
                   padding: '3px 4px', textAlign: 'center', fontSize: 11,
@@ -238,7 +249,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                   </td>
                 )
               })}
-              <td colSpan={10} style={{ background: 'var(--color-background-secondary)' }} />
+              <td colSpan={11} style={{ background: 'var(--color-background-secondary)' }} />
             </tr>
           ))}
         </tbody>
