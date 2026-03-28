@@ -374,26 +374,7 @@ class NurseScheduler:
             self.model.add(oc >= min_off)
             self.model.add(oc <= min_off + 2)  # ±2일 허용 (work_hours 제거 후 자유도 확보)
 
-    # ── Hard: 근무시간 형평성 (N전담·주2일제 제외, 2교대 포함) ──────────────────
-
-    def _c_work_hours_fairness(self):
-        """N전담·주2일제 제외 전원(2교대 포함) 월 총 근무시간 편차 ≤ 32h (완화).
-        soft penalty(⑨)와 함께 쓰므로 hard는 넉넉하게 잡아 infeasible 방지."""
-        nurses = [n for n in self.nurses
-                  if not n.is_night_dedicated and not n.is_part_time]
-        if len(nurses) < 2:
-            return
-        hours_vars = [
-            sum(
-                SHIFT_HOURS[s] * self.sv[n.id][d][s]
-                for d in self.days for s in ALL_WORK_WITH_EDU
-            )
-            for n in nurses
-        ]
-        min_h = self.model.new_int_var(0, self.num_days * 24, "min_work_h")
-        for h in hours_vars:
-            self.model.add(h >= min_h)
-            self.model.add(h <= min_h + 32)
+    # 근무시간 형평성은 soft penalty(⑨)로만 처리 — hard 제약 없음
 
     # ── Hard: shift 전환 금지 ─────────────────────────────────────────────────
 
@@ -709,7 +690,6 @@ class NurseScheduler:
         self._c_charge_constraints()
         self._c_two_shift_pair()
         self._c_monthly_work_hours()   # 상한선 전용 (2교대·주2일제만)
-        self._c_work_hours_fairness()  # 형평성: N전담·주2일제 제외, 2교대 포함, ≤16h
         self._c_min_off_guarantee()
         self._c_forbidden_transitions()
         self._c_night_block_3shift()
