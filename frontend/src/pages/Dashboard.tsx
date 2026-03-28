@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Nurse, ConstraintConfig, ScheduleResult, Holiday, SolverStatus, GroupType } from '../types'
 import { GROUP_LABEL, GROUP_COLOR } from '../types'
-import { startSchedule, connectJobWS, downloadExcel, getHolidays } from '../utils/api'
+import { startSchedule, connectJobWS, downloadExcel, getHolidays, analyzeInfeasibility } from '../utils/api'
 import UploadPanel from '../components/UploadPanel'
 import ConstraintPanel from '../components/ConstraintPanel'
 import SolverProgress from '../components/SolverProgress'
@@ -15,13 +15,18 @@ const DEFAULT_CONFIG: ConstraintConfig = {
   min_staff_sunday:   { D: 5, E: 5, N: 5 },
   max_consecutive_work: 5,
   night_dedicated_count: 14,
-  max_first_year: 12,
+  max_first_year: 15,
   min_night_block: 2,
   max_night_block: 3,
+  max_two_shift_pairs_per_day: 2,
+  max_d6_block: 2,
+  max_n6_block: 2,
+  night_min_gap: 10,
+  night_max_count: 7,
   time_limit_seconds: 90,
 }
 
-const GROUPS: GroupType[] = ['leader', 'mid', 'junior', 'first']
+const GROUPS: GroupType[] = ['charge', 'leader', 'mid', 'junior', 'first']
 
 export default function Dashboard() {
   const [nurses,   setNurses]   = useState<Nurse[]>([])
@@ -34,6 +39,8 @@ export default function Dashboard() {
   const [filterGrp, setFilterGrp] = useState('')
   const [sideOpen, setSideOpen] = useState(true)
   const [activeTab, setActiveTab] = useState<'upload'|'nurses'|'constraints'>('upload')
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysis,  setAnalysis]  = useState<any>(null)
 
   const wsRef    = useRef<WebSocket | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -66,12 +73,28 @@ export default function Dashboard() {
     }
   }
 
+  async function handleAnalyze() {
+    setAnalyzing(true)
+    setAnalysis(null)
+    try {
+      const r = await analyzeInfeasibility(nurses, config)
+      setAnalysis(r)
+    } catch {
+      alert('분석 실패')
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
   function handleDownload() {
     if (!jobId) return
     downloadExcel(jobId, nurses, config).catch(() => alert('다운로드 실패'))
   }
 
-  const grpCount = GROUPS.reduce((acc, g) => ({ ...acc, [g]: nurses.filter(n => n.group === g).length }), {} as Record<GroupType, number>)
+  const grpCount = GROUPS.reduce(
+    (acc, g) => ({ ...acc, [g]: nurses.filter(n => n.group === g).length }),
+    {} as Record<GroupType, number>
+  )
   const running = status === 'running' || status === 'pending'
 
   return (
@@ -89,7 +112,6 @@ export default function Dashboard() {
         flexDirection: 'column',
       }}>
         <div style={{ padding: '16px 16px 0', flexShrink: 0 }}>
-          {/* 탭 */}
           <div style={{ display: 'flex', gap: 0, borderBottom: '0.5px solid var(--color-border-tertiary)', marginBottom: 16 }}>
             {([
               { id: 'upload',      label: '업로드' },
@@ -125,7 +147,7 @@ export default function Dashboard() {
             <div>
               {/* 그룹 요약 */}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-                {GROUPS.map(g => (
+                {GROUPS.filter(g => grpCount[g] > 0).map(g => (
                   <span key={g} style={{
                     fontSize: 11, padding: '2px 8px', borderRadius: 10,
                     background: GROUP_COLOR[g] + '22', color: GROUP_COLOR[g],
@@ -136,10 +158,8 @@ export default function Dashboard() {
                 ))}
               </div>
 
-              {/* 수동 추가 인풋 */}
               <NurseAddRow onAdd={n => setNurses([...nurses, n])} nextId={nurses.length + 1} />
 
-              {/* 명단 */}
               <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {nurses.map(n => (
                   <div key={n.id} style={{
@@ -149,7 +169,10 @@ export default function Dashboard() {
                     border: '0.5px solid var(--color-border-tertiary)',
                   }}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: GROUP_COLOR[n.group], flexShrink: 0 }} />
-                    <span style={{ flex: 1, fontWeight: 500 }}>{n.is_night_dedicated ? '★ ' : ''}{n.name}</span>
+                    <span style={{ flex: 1, fontWeight: 500 }}>
+                      {n.is_night_dedicated ? '★ ' : n.can_two_shift ? '2 ' : n.is_part_time ? '파 ' : ''}
+                      {n.name}
+                    </span>
                     <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>{GROUP_LABEL[n.group].slice(0,2)}</span>
                     <button onClick={() => setNurses(nurses.filter(x => x.id !== n.id))}
                       style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
@@ -187,6 +210,15 @@ export default function Dashboard() {
               }}>📥</button>
             )}
           </div>
+          {status === 'infeasible' && (
+            <button onClick={handleAnalyze} disabled={analyzing} style={{
+              width: '100%', marginTop: 8, padding: '9px', background: analyzing ? '#94a3b8' : '#7c3aed',
+              color: '#fff', border: 'none', borderRadius: 8, fontSize: 13,
+              fontWeight: 600, cursor: analyzing ? 'not-allowed' : 'pointer',
+            }}>
+              {analyzing ? '분석 중...' : '🔍 원인 분석'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -210,7 +242,6 @@ export default function Dashboard() {
 
           {result && (
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-              {/* 그룹 필터 */}
               {['', ...GROUPS].map(g => (
                 <button key={g} onClick={() => setFilterGrp(g)} style={{
                   padding: '4px 12px', borderRadius: 14, fontSize: 12, fontWeight: 500,
@@ -226,6 +257,62 @@ export default function Dashboard() {
           )}
         </div>
 
+        {analysis && (
+          <div style={{
+            marginBottom: 16, padding: 16, borderRadius: 10,
+            border: '1px solid #7c3aed44', background: '#f5f3ff',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <span style={{ fontWeight: 700, fontSize: 14, color: '#5b21b6' }}>🔍 INFEASIBLE 원인 분석</span>
+              <button onClick={() => setAnalysis(null)} style={{
+                background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#7c3aed',
+              }}>×</button>
+            </div>
+
+            {analysis.culprits?.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#991b1b', marginBottom: 6 }}>❌ 충돌 제약</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {analysis.culprits.map((c: any) => (
+                    <div key={c.key} style={{
+                      padding: '5px 10px', borderRadius: 6, fontSize: 11,
+                      background: '#fee2e2', color: '#991b1b',
+                      border: '1px solid #fca5a5',
+                    }}>
+                      <strong>[{c.label}]</strong> {c.description}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {analysis.daily_issues?.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#92400e', marginBottom: 6 }}>📅 날짜별 인원 부족</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {analysis.daily_issues.slice(0, 8).map((issue: any, i: number) => (
+                    <div key={i} style={{
+                      padding: '3px 10px', borderRadius: 4, fontSize: 11,
+                      background: '#fef3c7', color: '#92400e',
+                    }}>{issue.reason}</div>
+                  ))}
+                  {analysis.daily_issues.length > 8 && (
+                    <div style={{ fontSize: 11, color: '#92400e' }}>… 외 {analysis.daily_issues.length - 8}건</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {analysis.summary && (
+              <div style={{ fontSize: 11, whiteSpace: 'pre-line', color: '#374151', borderTop: '1px solid #ddd6fe', paddingTop: 10 }}>
+                {analysis.summary.split('\n').filter((l: string) => l.startsWith('  →')).map((l: string, i: number) => (
+                  <div key={i} style={{ padding: '2px 0', color: '#1d4ed8' }}>{l.trim()}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {result ? (
           <ScheduleTable
             result={result}
@@ -234,6 +321,18 @@ export default function Dashboard() {
             holidays={holidays}
             filterGroup={filterGrp}
           />
+        ) : status === 'infeasible' && !analysis ? (
+          <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            height: '40vh', color: '#991b1b', textAlign: 'center',
+          }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>⛔</div>
+            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>스케줄 생성 불가</div>
+            <div style={{ fontSize: 13, color: '#6b7280' }}>
+              현재 설정으로는 조건을 만족하는 듀티표를 만들 수 없습니다.<br/>
+              왼쪽 "🔍 원인 분석" 버튼을 눌러 원인을 확인하세요.
+            </div>
+          </div>
         ) : (
           <div style={{
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -259,11 +358,22 @@ function NurseAddRow({ onAdd, nextId }: { onAdd: (n: Nurse) => void; nextId: num
   const [name,  setName]  = useState('')
   const [group, setGroup] = useState<GroupType>('mid')
   const [nd,    setNd]    = useState(false)
+  const [ts,    setTs]    = useState(false)
+  const [pt,    setPt]    = useState(false)
 
   function add() {
     if (!name.trim()) return
-    onAdd({ id: nextId, name: name.trim(), group, is_night_dedicated: nd, fixed_requests: {}, preferred_requests: [] })
-    setName(''); setNd(false)
+    onAdd({
+      id: nextId,
+      name: name.trim(),
+      group,
+      is_night_dedicated: nd,
+      can_two_shift: ts,
+      is_part_time: pt,
+      fixed_requests: {},
+      preferred_requests: [],
+    })
+    setName(''); setNd(false); setTs(false); setPt(false)
   }
 
   return (
@@ -282,12 +392,18 @@ function NurseAddRow({ onAdd, nextId }: { onAdd: (n: Nurse) => void; nextId: num
         background: 'var(--color-background-primary)',
         color: 'var(--color-text-primary)',
       }}>
-        {(['leader','mid','junior','first'] as GroupType[]).map(g => (
+        {(['charge','leader','mid','junior','first'] as GroupType[]).map(g => (
           <option key={g} value={g}>{GROUP_LABEL[g]}</option>
         ))}
       </select>
       <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>
         <input type="checkbox" checked={nd} onChange={e => setNd(e.target.checked)} />N전담
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        <input type="checkbox" checked={ts} onChange={e => setTs(e.target.checked)} />2교대
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        <input type="checkbox" checked={pt} onChange={e => setPt(e.target.checked)} />주2일
       </label>
       <button onClick={add} style={{
         padding: '6px 12px', background: '#2563eb', color: '#fff',

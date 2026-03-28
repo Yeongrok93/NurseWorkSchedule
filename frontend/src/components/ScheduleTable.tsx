@@ -31,6 +31,13 @@ function thBase(): React.CSSProperties {
   }
 }
 
+function getNurseAttr(n: Nurse): string {
+  if (n.is_night_dedicated) return 'N전담'
+  if (n.can_two_shift)      return '2교대'
+  if (n.is_part_time)       return '주2일'
+  return '·'
+}
+
 export default function ScheduleTable({ result, nurses, config, holidays, filterGroup }: Props) {
   const { year, month } = config
   const numDays     = new Date(year, month, 0).getDate()
@@ -47,6 +54,8 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
     ? nurses.filter(n => n.group === filterGroup)
     : nurses
 
+  const STAT_SHIFTS = ['D','E','N','6D','6N','EDU','O'] as const
+
   return (
     <div style={{ overflowX: 'auto', borderRadius: 10, border: '0.5px solid var(--color-border-tertiary)' }}>
       <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
@@ -62,13 +71,13 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
               </span>
             </th>
             <th colSpan={numDays} style={{ ...thBase(), background: '#1e293b' }} />
-            <th colSpan={6} style={{ ...thBase(), background: '#1e293b' }} />
+            <th colSpan={10} style={{ ...thBase(), background: '#1e293b' }} />
           </tr>
           {/* 날짜 헤더 */}
           <tr>
             <th style={{ ...thBase(), minWidth: 36 }}>그룹</th>
             <th style={{ ...thBase(), minWidth: 72 }}>이름</th>
-            <th style={{ ...thBase(), minWidth: 40 }}>전담</th>
+            <th style={{ ...thBase(), minWidth: 44 }}>속성</th>
             {days.map(d => {
               const dt  = getDayType(year, month, d, holidayDays)
               const dow = new Date(year, month - 1, d).getDay()
@@ -88,8 +97,8 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 </th>
               )
             })}
-            {['D','E','N','O','근무','요청'].map(h => (
-              <th key={h} style={{ ...thBase(), minWidth: 30 }}>{h}</th>
+            {[...STAT_SHIFTS, '근무','시간','요청'].map(h => (
+              <th key={h} style={{ ...thBase(), minWidth: 28 }}>{h}</th>
             ))}
           </tr>
         </thead>
@@ -100,6 +109,11 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
             const st      = result.stats[n.name]
             const reqMap  = Object.fromEntries(n.preferred_requests.map(r => [r.day, r.shift]))
             const grpClr  = GROUP_COLOR[n.group]
+            const attr    = getNurseAttr(n)
+            const attrClr = n.is_night_dedicated ? '#4c1d95'
+                          : n.can_two_shift ? '#1e3a8a'
+                          : n.is_part_time  ? '#92400e'
+                          : 'transparent'
 
             return (
               <tr key={n.id} style={{ borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
@@ -119,20 +133,21 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 }}>
                   {n.is_night_dedicated ? '★ ' : ''}{n.name}
                 </td>
-                {/* 전담 */}
+                {/* 속성 */}
                 <td style={{
-                  padding: '3px 4px', textAlign: 'center', fontSize: 10,
-                  color: n.is_night_dedicated ? '#4c1d95' : 'transparent',
+                  padding: '3px 4px', textAlign: 'center', fontSize: 9,
+                  color: attrClr,
                   background: 'var(--color-background-primary)',
                 }}>
-                  {n.is_night_dedicated ? 'N' : '·'}
+                  {attr}
                 </td>
 
                 {/* 근무 셀 */}
                 {days.map(d => {
                   const sh    = (dayMap[String(d)] ?? 'O') as ShiftType
                   const isReq = reqMap[d] === sh
-                  const { bg, text } = SHIFT_COLOR[sh]
+                  const clr   = SHIFT_COLOR[sh] ?? SHIFT_COLOR['O']
+                  const { bg, text } = clr
                   const dt    = getDayType(year, month, d, holidayDays)
                   const wkBg  = dt !== 'weekday' && sh === 'O' ? '#eef2ff' : undefined
 
@@ -157,22 +172,33 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                   )
                 })}
 
-                {/* 통계 */}
-                {st && (['D','E','N','O'] as ShiftType[]).map(s => (
+                {/* 통계 — shift 카운트 */}
+                {st && STAT_SHIFTS.map(s => (
                   <td key={s} style={{
-                    padding: '3px 4px', textAlign: 'center', fontSize: 11, fontWeight: 500,
-                    color: SHIFT_COLOR[s].text,
+                    padding: '3px 2px', textAlign: 'center', fontSize: 10, fontWeight: 500,
+                    color: (SHIFT_COLOR[s] ?? SHIFT_COLOR['O']).text,
                     background: 'var(--color-background-secondary, #f8f8f6)',
                   }}>
                     {st.counts[s] ?? 0}
                   </td>
                 ))}
+                {/* 총 근무 */}
                 <td style={{
                   padding: '3px 4px', textAlign: 'center', fontWeight: 700, fontSize: 11,
                   background: 'var(--color-background-secondary)',
                 }}>
                   {st?.total_work ?? 0}
                 </td>
+                {/* 총 시간 */}
+                <td style={{
+                  padding: '3px 4px', textAlign: 'center', fontSize: 10,
+                  color: st && st.total_hours < st.target_hours - 8 ? '#dc2626' : 'var(--color-text-secondary)',
+                  background: 'var(--color-background-secondary)',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {st ? `${st.total_hours}h` : ''}
+                </td>
+                {/* 요청 달성 */}
                 <td style={{
                   padding: '3px 4px', textAlign: 'center', fontSize: 11,
                   color: 'var(--color-text-secondary)',
@@ -184,8 +210,8 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
             )
           })}
 
-          {/* 일별 합계 행 */}
-          {(['D','E','N'] as ShiftType[]).map(sh => (
+          {/* 일별 D/E/N 합계 행 (6D/6N pairs 반영) */}
+          {(['D','E','N'] as const).map(sh => (
             <tr key={`sum-${sh}`}>
               <td colSpan={3} style={{
                 padding: '3px 10px', fontSize: 11, fontWeight: 700,
@@ -195,10 +221,11 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 {sh} 합계
               </td>
               {days.map(d => {
-                const dt  = getDayType(year, month, d, holidayDays)
-                const cnt = nurses.filter(n => (result.schedule[n.name]?.[String(d)] ?? 'O') === sh).length
-                const mn  = (minStaff[dt] as any)[sh] ?? 0
-                const ok  = cnt >= mn
+                const dt    = getDayType(year, month, d, holidayDays)
+                const pairs = nurses.filter(n => (result.schedule[n.name]?.[String(d)] ?? 'O') === '6D').length
+                const cnt   = nurses.filter(n => (result.schedule[n.name]?.[String(d)] ?? 'O') === sh).length + pairs
+                const mn    = (minStaff[dt] as any)[sh] ?? 0
+                const ok    = cnt >= mn
                 return (
                   <td key={d} style={{
                     textAlign: 'center', fontSize: 10, fontWeight: 600, padding: '2px 0',
@@ -211,7 +238,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                   </td>
                 )
               })}
-              <td colSpan={6} style={{ background: 'var(--color-background-secondary)' }} />
+              <td colSpan={10} style={{ background: 'var(--color-background-secondary)' }} />
             </tr>
           ))}
         </tbody>

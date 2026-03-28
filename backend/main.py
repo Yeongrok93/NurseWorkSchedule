@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from excel_parser import parse_nurse_excel
 from excel_export import build_excel
+from infeasibility_analyzer import analyze as analyze_infeasibility
 from scheduler import (
     Group, Nurse, NurseScheduler, ScheduleConfig, Shift, ShiftRequest,
     days_in_month,
@@ -48,7 +49,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 진행중인 솔버 작업 저장 (job_id → result)
 _jobs: dict[str, Any] = {}
 
 
@@ -57,9 +57,11 @@ _jobs: dict[str, Any] = {}
 class NurseIn(BaseModel):
     id: int
     name: str
-    group: str          # leader / mid / junior / first
+    group: str              # charge / leader / mid / junior / first
     is_night_dedicated: bool = False
-    fixed_requests: dict[str, str] = {}      # {"1": "O", ...}
+    can_two_shift: bool = False
+    is_part_time: bool = False
+    fixed_requests: dict[str, str] = {}      # {"1": "EDU", ...}
     preferred_requests: list[dict] = []      # [{"day":3,"shift":"D"}, ...]
 
 class ConstraintConfig(BaseModel):
@@ -70,9 +72,14 @@ class ConstraintConfig(BaseModel):
     min_staff_sunday:   dict[str, int] = {"D": 5, "E": 5, "N": 5}
     max_consecutive_work: int = 5
     night_dedicated_count: int = 14
-    max_first_year: int = 12
+    max_first_year: int = 15
     min_night_block: int = 2
     max_night_block: int = 3
+    max_two_shift_pairs_per_day: int = 2
+    max_d6_block: int = 2
+    max_n6_block: int = 2
+    night_min_gap: int = 10
+    night_max_count: int = 7
     time_limit_seconds: int = 90
 
 class ScheduleRequest(BaseModel):
@@ -90,27 +97,14 @@ def _to_nurse(ni: NurseIn) -> Nurse:
     return Nurse(
         id=ni.id, name=ni.name, group=grp,
         is_night_dedicated=ni.is_night_dedicated,
+        can_two_shift=ni.can_two_shift,
+        is_part_time=ni.is_part_time,
         fixed_requests=fixed,
         preferred_requests=prefs,
     )
 
 def _make_config(cfg: ConstraintConfig) -> ScheduleConfig:
-    kr = holidays.KR(years=cfg.year)
-
-    def day_type_with_holiday(year, month, day):
-        import datetime, calendar
-        date = datetime.date(year, month, day)
-        if date in kr:
-            return "sunday"   # 공휴일 → 일요일 기준
-        wd = calendar.weekday(year, month, day)
-        if wd == 5: return "saturday"
-        if wd == 6: return "sunday"
-        return "weekday"
-
-    # monkey-patch day_type in scheduler module
-    import scheduler as sch_mod
-    sch_mod.day_type = day_type_with_holiday
-
+    # v3: holidays 처리는 scheduler 내부에서 자동으로 수행
     return ScheduleConfig(
         year=cfg.year,
         month=cfg.month,
@@ -124,6 +118,11 @@ def _make_config(cfg: ConstraintConfig) -> ScheduleConfig:
         max_first_year=cfg.max_first_year,
         min_night_block=cfg.min_night_block,
         max_night_block=cfg.max_night_block,
+        max_two_shift_pairs_per_day=cfg.max_two_shift_pairs_per_day,
+        max_d6_block=cfg.max_d6_block,
+        max_n6_block=cfg.max_n6_block,
+        night_min_gap=cfg.night_min_gap,
+        night_max_count=cfg.night_max_count,
         time_limit_seconds=cfg.time_limit_seconds,
     )
 
@@ -173,7 +172,6 @@ async def start_schedule(req: ScheduleRequest):
             nurses = [_to_nurse(n) for n in req.nurses]
             cfg    = _make_config(req.config)
 
-            # 솔버는 blocking → thread pool에서 실행
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
@@ -182,7 +180,6 @@ async def start_schedule(req: ScheduleRequest):
             if result is None:
                 _jobs[job_id]["status"] = "infeasible"
             else:
-                # int 키 → str 키
                 result["schedule"] = {
                     name: {str(d): sh for d, sh in dm.items()}
                     for name, dm in result["schedule"].items()
@@ -197,9 +194,25 @@ async def start_schedule(req: ScheduleRequest):
     return {"job_id": job_id}
 
 
+@app.post("/schedule/analyze")
+async def analyze_schedule(req: ScheduleRequest):
+    """
+    INFEASIBLE 원인 분석.
+    제약 그룹을 하나씩 제거하며 어떤 제약이 충돌을 일으키는지 찾아준다.
+    """
+    nurses = [_to_nurse(n) for n in req.nurses]
+    cfg    = _make_config(req.config)
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: analyze_infeasibility(nurses, cfg, time_limit_per_check=20),
+    )
+    return result
+
+
 @app.get("/schedule/{job_id}")
 def get_schedule(job_id: str):
-    """완료된 스케줄 결과 조회."""
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(404, "job not found")
@@ -208,7 +221,6 @@ def get_schedule(job_id: str):
 
 @app.post("/schedule/{job_id}/export")
 async def export_schedule(job_id: str, req: ScheduleRequest):
-    """결과를 Excel 파일로 다운로드."""
     job = _jobs.get(job_id)
     if not job or job["status"] != "done":
         raise HTTPException(400, "완료된 스케줄이 없습니다")
@@ -248,15 +260,9 @@ async def ws_progress(websocket: WebSocket, job_id: str):
 
             if status in ("done", "infeasible", "error"):
                 if status == "done":
-                    await websocket.send_json({
-                        "type": "result",
-                        "data": job["result"],
-                    })
+                    await websocket.send_json({"type": "result", "data": job["result"]})
                 elif status == "error":
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": job.get("error", "unknown error"),
-                    })
+                    await websocket.send_json({"type": "error", "message": job.get("error", "unknown error")})
                 break
 
             await asyncio.sleep(1)

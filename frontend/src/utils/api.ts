@@ -59,6 +59,25 @@ export async function downloadExcel(
   URL.revokeObjectURL(url)
 }
 
+export async function analyzeInfeasibility(
+  nurses: Nurse[],
+  config: ConstraintConfig,
+): Promise<{
+  culprits: { key: string; label: string; description: string }[]
+  daily_issues: { day: number; shift: string; reason: string }[]
+  summary: string
+  always_infeasible: boolean
+  feasible_without: string[]
+}> {
+  const res = await fetch(`${BASE}/schedule/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nurses, config }),
+  })
+  if (!res.ok) throw new Error('분석 실패')
+  return res.json()
+}
+
 export async function getHolidays(year: number, month: number): Promise<Holiday[]> {
   const res = await fetch(`${BASE}/holidays?year=${year}&month=${month}`)
   return res.json()
