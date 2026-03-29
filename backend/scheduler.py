@@ -311,15 +311,15 @@ class NurseScheduler:
                 if s == Shift.D:
                     actual = sum(self.sv[n.id][d][Shift.D] for n in self.nurses)
                     total  = actual + pairs
-                    # D: 헬프 가능 → [min-1, min+1]
+                    # D: 헬프 가능 → [min-1, min] (초과 금지: D 넘치고 E 부족 방지)
                     self.model.add(total >= min_cnt - 1)
-                    self.model.add(total <= min_cnt + 1)
+                    self.model.add(total <= min_cnt)
                 elif s == Shift.E:
                     actual = sum(self.sv[n.id][d][Shift.E] for n in self.nurses)
                     total  = actual + pairs
-                    # E: 헬프 가능 → [min-1, min+1]
+                    # E: 헬프 가능 → [min-1, min] (초과 금지)
                     self.model.add(total >= min_cnt - 1)
-                    self.model.add(total <= min_cnt + 1)
+                    self.model.add(total <= min_cnt)
                 elif s == Shift.N:
                     actual = sum(self.sv[n.id][d][Shift.N] for n in self.nurses)
                     total  = actual + pairs
