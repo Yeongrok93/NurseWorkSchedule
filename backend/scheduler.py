@@ -340,7 +340,9 @@ class NurseScheduler:
                 # 상한 = 해당 월 평일×8h (일반 목표시간과 동일 = 공휴일·주말 제외)
                 self.model.add(total_hours <= self.target_h)
             elif n.is_part_time:
-                self.model.add(total_hours <= self.part_time_target_h)
+                # 주2일제: 목표시간 ±8h 범위 강제 (하한 없으면 solver가 최소 배정)
+                self.model.add(total_hours >= self.part_time_target_h - 8)
+                self.model.add(total_hours <= self.part_time_target_h + 8)
 
     # ── Hard: 최소 오프 보장 ─────────────────────────────────────────────────
 
@@ -397,6 +399,7 @@ class NurseScheduler:
                 self.model.add_implication(sv[d][Shift.E], sv[d1][Shift.EDU].negated())
 
                 # 2교대
+                self.model.add_implication(sv[d][Shift.E],  sv[d1][Shift.D6].negated())  # E→6D 금지
                 self.model.add_implication(sv[d][Shift.N6], sv[d1][Shift.D6].negated())
                 self.model.add_implication(sv[d][Shift.N6], sv[d1][Shift.D].negated())
                 self.model.add_implication(sv[d][Shift.N6], sv[d1][Shift.E].negated())
