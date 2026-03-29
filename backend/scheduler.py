@@ -437,13 +437,20 @@ class NurseScheduler:
                 self.model.add_implication(sv[d][Shift.N],  sv[d1][Shift.D6].negated())
                 self.model.add_implication(sv[d][Shift.D6], sv[d1][Shift.N].negated())
 
-                # N→O→D 금지
+                # N→O→D/6D 금지, 6N→O→6D 금지
                 if d2 in self.days:
+                    # N→O→* 패턴
                     nod = self.model.new_bool_var(f"nod_{n.id}_{d}")
                     self.model.add_bool_and([sv[d][Shift.N], sv[d1][Shift.O]]).only_enforce_if(nod)
                     self.model.add_bool_or([sv[d][Shift.N].negated(), sv[d1][Shift.O].negated()]).only_enforce_if(nod.negated())
                     self.model.add_implication(nod, sv[d2][Shift.D].negated())
+                    self.model.add_implication(nod, sv[d2][Shift.D6].negated())
                     self.model.add_implication(nod, sv[d2][Shift.EDU].negated())
+                    # 6N→O→6D 금지
+                    n6od = self.model.new_bool_var(f"n6od_{n.id}_{d}")
+                    self.model.add_bool_and([sv[d][Shift.N6], sv[d1][Shift.O]]).only_enforce_if(n6od)
+                    self.model.add_bool_or([sv[d][Shift.N6].negated(), sv[d1][Shift.O].negated()]).only_enforce_if(n6od.negated())
+                    self.model.add_implication(n6od, sv[d2][Shift.D6].negated())
 
     # ── Hard: 연속 근무 ───────────────────────────────────────────────────────
 
@@ -545,10 +552,10 @@ class NurseScheduler:
     # ── Hard: 최소 근무시간 (remain >= -3) ───────────────────────────────────────
 
     def _c_min_work_hours_per_nurse(self):
-        """일반 간호사 월 최소 근무 = target - 24h (remain >= -3).
-        N전담·주2일제·2교대 제외."""
+        """일반 간호사 + 2교대 월 최소 근무 = target - 24h (remain >= -3).
+        N전담·주2일제 제외."""
         for n in self.nurses:
-            if n.is_night_dedicated or n.is_part_time or n.can_two_shift:
+            if n.is_night_dedicated or n.is_part_time:
                 continue
             total_hours = sum(
                 SHIFT_HOURS[s] * self.sv[n.id][d][s]
