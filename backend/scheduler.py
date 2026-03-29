@@ -748,13 +748,14 @@ class NurseScheduler:
                   f"objective={solver.objective_value:.1f})")
             return self._extract_result(solver)
 
-        # UNKNOWN = 시간초과. ResponseStats에 objective가 있으면 중간해 반환.
-        if solver.objective_value > 0:
-            print(f"[Scheduler] [WARN] 시간초과 - 최선의 해 반환 (objective={solver.objective_value:.1f})")
+        # UNKNOWN = 시간초과. 해가 하나라도 있으면 반환.
+        try:
+            obj = solver.objective_value
+            print(f"[Scheduler] [WARN] 시간초과 - 최선의 해 반환 (objective={obj:.1f})")
             return self._extract_result(solver)
-
-        print(f"[Scheduler] [FAIL] 시간초과 - 해 없음")
-        return None
+        except Exception:
+            print(f"[Scheduler] [FAIL] 시간초과 - 해 없음")
+            return None
 
     def _extract_result(self, solver: cp_model.CpSolver) -> dict:
         schedule: dict[str, dict[int, str]] = {}
