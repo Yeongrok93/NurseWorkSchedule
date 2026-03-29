@@ -542,10 +542,10 @@ class NurseScheduler:
             night_total = sum(self.sv[n.id][d][Shift.N] for d in self.days)
             self.model.add(night_total >= 2)
 
-    # ── Hard: 최소 근무시간 (remain >= -2) ───────────────────────────────────────
+    # ── Hard: 최소 근무시간 (remain >= -3) ───────────────────────────────────────
 
     def _c_min_work_hours_per_nurse(self):
-        """일반 간호사 월 최소 근무 = target - 16h (remain >= -2).
+        """일반 간호사 월 최소 근무 = target - 24h (remain >= -3).
         N전담·주2일제·2교대 제외."""
         for n in self.nurses:
             if n.is_night_dedicated or n.is_part_time or n.can_two_shift:
@@ -554,7 +554,7 @@ class NurseScheduler:
                 SHIFT_HOURS[s] * self.sv[n.id][d][s]
                 for d in self.days for s in ALL_WORK_WITH_EDU
             )
-            self.model.add(total_hours >= self.target_h - 16)
+            self.model.add(total_hours >= self.target_h - 24)
 
     # ── Soft 목적함수 ─────────────────────────────────────────────────────────
 
@@ -772,7 +772,6 @@ class NurseScheduler:
         self._c_max_night_per_nurse()
         self._c_min_night_per_nurse()
         self._c_min_work_hours_per_nurse()
-
         print("[Scheduler] Soft 목적함수 설정 중...")
         penalties, rewards = self._build_objective()
         self.model.minimize(sum(penalties) - sum(rewards))
