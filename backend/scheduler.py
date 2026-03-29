@@ -318,8 +318,7 @@ class NurseScheduler:
                     total  = actual + pairs
                 else:
                     continue
-                self.model.add(total >= min_cnt)
-                self.model.add(total <= min_cnt + 1)
+                self.model.add(total >= min_cnt - 1)  # 외부 헬프 가능 → 1명 부족 허용
 
     # ── Hard: 월 목표 근무시간 ────────────────────────────────────────────────
 
@@ -396,7 +395,7 @@ class NurseScheduler:
         min_off = self.model.new_int_var(0, self.num_days, "min_off_h")
         for oc in off_counts:
             self.model.add(oc >= min_off)
-            self.model.add(oc <= min_off + 4)  # ±4일 허용 (min_staff 상한과 충돌 방지, O 여유 확보)
+            self.model.add(oc <= min_off + 2)  # ±2일 허용
 
     # 근무시간 형평성은 soft penalty(⑨)로만 처리 — hard 제약 없음
 
