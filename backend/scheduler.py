@@ -396,7 +396,7 @@ class NurseScheduler:
         min_off = self.model.new_int_var(0, self.num_days, "min_off_h")
         for oc in off_counts:
             self.model.add(oc >= min_off)
-            self.model.add(oc <= min_off + 2)  # ±2일 허용 (work_hours 제거 후 자유도 확보)
+            self.model.add(oc <= min_off + 4)  # ±4일 허용 (min_staff 상한과 충돌 방지, O 여유 확보)
 
     # 근무시간 형평성은 soft penalty(⑨)로만 처리 — hard 제약 없음
 
