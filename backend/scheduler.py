@@ -311,13 +311,15 @@ class NurseScheduler:
                 if s == Shift.D:
                     actual = sum(self.sv[n.id][d][Shift.D] for n in self.nurses)
                     total  = actual + pairs
-                    # D: 정확히 min (shortfall 금지 → 간호사 오프 과다 방지)
-                    self.model.add(total == min_cnt)
+                    # D: 헬프 가능 → [min-1, min]
+                    self.model.add(total >= min_cnt - 1)
+                    self.model.add(total <= min_cnt)
                 elif s == Shift.E:
                     actual = sum(self.sv[n.id][d][Shift.E] for n in self.nurses)
                     total  = actual + pairs
-                    # E: 정확히 min (shortfall 금지 → 간호사 오프 과다 방지)
-                    self.model.add(total == min_cnt)
+                    # E: 헬프 가능 → [min-1, min]
+                    self.model.add(total >= min_cnt - 1)
+                    self.model.add(total <= min_cnt)
                 elif s == Shift.N:
                     actual = sum(self.sv[n.id][d][Shift.N] for n in self.nurses)
                     total  = actual + pairs
@@ -540,6 +542,20 @@ class NurseScheduler:
             night_total = sum(self.sv[n.id][d][Shift.N] for d in self.days)
             self.model.add(night_total >= 2)
 
+    # ── Hard: 최소 근무시간 (remain >= -2) ───────────────────────────────────────
+
+    def _c_min_work_hours_per_nurse(self):
+        """일반 간호사 월 최소 근무 = target - 16h (remain >= -2).
+        N전담·주2일제·2교대 제외."""
+        for n in self.nurses:
+            if n.is_night_dedicated or n.is_part_time or n.can_two_shift:
+                continue
+            total_hours = sum(
+                SHIFT_HOURS[s] * self.sv[n.id][d][s]
+                for d in self.days for s in ALL_WORK_WITH_EDU
+            )
+            self.model.add(total_hours >= self.target_h - 16)
+
     # ── Soft 목적함수 ─────────────────────────────────────────────────────────
 
     def _build_objective(self):
@@ -755,6 +771,7 @@ class NurseScheduler:
         self._c_first_year_limit()
         self._c_max_night_per_nurse()
         self._c_min_night_per_nurse()
+        self._c_min_work_hours_per_nurse()
 
         print("[Scheduler] Soft 목적함수 설정 중...")
         penalties, rewards = self._build_objective()
