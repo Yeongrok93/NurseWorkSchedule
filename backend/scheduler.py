@@ -492,14 +492,12 @@ class NurseScheduler:
     def _c_night_block_3shift(self):
         for n in self.nurses:
             for d in self.days:
+                # N 연속 4개 금지
                 window = [d, d+1, d+2, d+3]
                 if all(w in self.days for w in window):
-                    # N + 6N 합산 4일 연속 최대 3개 (NN6N6N 등 혼합 블록 방지)
-                    self.model.add(sum(
-                        self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
-                        for w in window
-                    ) <= 3)
-                # N 단독 근무 금지 (반드시 인접 N 또는 6N 필요)
+                    self.model.add(sum(self.sv[n.id][w][Shift.N] for w in window) <= 3)
+
+                # N 단독 근무 금지 (인접 N 또는 6N 있어야 함)
                 neighbors = [self.sv[n.id][d][Shift.N].negated()]
                 if d-1 in self.days:
                     neighbors.append(self.sv[n.id][d-1][Shift.N])
