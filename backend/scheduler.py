@@ -343,6 +343,36 @@ class NurseScheduler:
                 # 주2일제: 목표시간 ±8h 범위 강제 (하한 없으면 solver가 최소 배정)
                 self.model.add(total_hours >= self.part_time_target_h - 8)
                 self.model.add(total_hours <= self.part_time_target_h + 8)
+                # 주 단위(월~일) 최소 2일 근무
+                self._c_part_time_weekly(n)
+
+    # ── Hard: 주2일제 주 단위 최소 근무 ──────────────────────────────────────────
+
+    def _c_part_time_weekly(self, n: "Nurse"):
+        """주2일제: 월~일 단위 주마다 최소 2일 근무.
+        해당 주에 월내 날짜가 2일 미만이면 그 날 수만큼만 요구."""
+        import datetime
+        work_shifts = [s for s in ALL_WORK_WITH_EDU]
+        # 월 첫날의 요일(0=월 … 6=일) 기준으로 주 그룹화
+        for start_day in range(1, self.num_days + 1):
+            dt = datetime.date(self.cfg.year, self.cfg.month, start_day)
+            if dt.weekday() != 0 and start_day != 1:  # 월요일 또는 1일만 주 시작
+                continue
+            # 이번 주에 속하는 날짜 수집
+            week_days = []
+            for d in range(start_day, self.num_days + 1):
+                dt2 = datetime.date(self.cfg.year, self.cfg.month, d)
+                if dt2.weekday() == 0 and d != start_day:
+                    break  # 다음 주 월요일
+                week_days.append(d)
+            if not week_days:
+                continue
+            min_work = min(2, len(week_days))
+            work_count = sum(
+                self.sv[n.id][d][s]
+                for d in week_days for s in work_shifts
+            )
+            self.model.add(work_count >= min_work)
 
     # ── Hard: 최소 오프 보장 ─────────────────────────────────────────────────
 
