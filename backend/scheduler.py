@@ -116,9 +116,9 @@ class ScheduleConfig:
     w_night_over7: int       = 40   # N 7개 초과 강력 억제
     w_night_interval: int    = 9    # 나이트 블록 간격
     w_shift_dist: int        = 3    # D/E/N 분배 균등 (낮춤: 나이트 균등과 중복)
-    w_two_shift_mix: int     = 5    # 2교대 D/E/N 사용 억제 (낮춤: 3교대 혼용 허용)
+    w_two_shift_mix: int     = 3    # 2교대 D/E/N 사용 억제 (살짝 낮춤: 3교대 혼용 더 허용)
 
-    time_limit_seconds: int = 90
+    time_limit_seconds: int = 180
 
 
 # ─── 유틸 ────────────────────────────────────────────────────────────────────
@@ -492,10 +492,13 @@ class NurseScheduler:
     def _c_night_block_3shift(self):
         for n in self.nurses:
             for d in self.days:
-                # N 연속 4개 금지
+                # N+6N 합산 연속 4개 금지 (NN6N6N 등 혼합 포함)
                 window = [d, d+1, d+2, d+3]
                 if all(w in self.days for w in window):
-                    self.model.add(sum(self.sv[n.id][w][Shift.N] for w in window) <= 3)
+                    self.model.add(sum(
+                        self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
+                        for w in window
+                    ) <= 3)
 
                 # N 단독 근무 금지 (인접 N 또는 6N 있어야 함)
                 neighbors = [self.sv[n.id][d][Shift.N].negated()]
