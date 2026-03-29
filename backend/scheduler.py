@@ -494,10 +494,19 @@ class NurseScheduler:
             for d in self.days:
                 window = [d, d+1, d+2, d+3]
                 if all(w in self.days for w in window):
-                    self.model.add(sum(self.sv[n.id][w][Shift.N] for w in window) <= 3)
+                    # N + 6N 합산 4일 연속 최대 3개 (NN6N6N 등 혼합 블록 방지)
+                    self.model.add(sum(
+                        self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
+                        for w in window
+                    ) <= 3)
+                # N 단독 근무 금지 (반드시 인접 N 또는 6N 필요)
                 neighbors = [self.sv[n.id][d][Shift.N].negated()]
-                if d-1 in self.days: neighbors.append(self.sv[n.id][d-1][Shift.N])
-                if d+1 in self.days: neighbors.append(self.sv[n.id][d+1][Shift.N])
+                if d-1 in self.days:
+                    neighbors.append(self.sv[n.id][d-1][Shift.N])
+                    neighbors.append(self.sv[n.id][d-1][Shift.N6])
+                if d+1 in self.days:
+                    neighbors.append(self.sv[n.id][d+1][Shift.N])
+                    neighbors.append(self.sv[n.id][d+1][Shift.N6])
                 self.model.add_bool_or(neighbors)
 
     def _c_night_block_2shift(self):
