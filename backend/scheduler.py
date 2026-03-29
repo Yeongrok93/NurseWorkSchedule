@@ -520,6 +520,28 @@ class NurseScheduler:
             f"1년차 수({len(first_year)}) > 허용({self.cfg.max_first_year})"
         )
 
+    # ── Hard: 일반 간호사 월간 N 최대 8개 ────────────────────────────────────────
+
+    def _c_max_night_per_nurse(self):
+        """N전담·2교대·주2일제 제외한 일반 간호사 월간 N ≤ 8."""
+        for n in self.nurses:
+            if n.is_night_dedicated or n.can_two_shift or n.is_part_time:
+                continue
+            night_total = sum(self.sv[n.id][d][Shift.N] for d in self.days)
+            self.model.add(night_total <= 8)
+
+    # ── Hard: 일반 간호사 월간 N 최소 2개 ────────────────────────────────────────
+
+    def _c_min_night_per_nurse(self):
+        """N전담·2교대·주2일제·charge 제외한 일반 간호사 월간 N ≥ 2.
+        charge는 N 금지이므로 제외."""
+        for n in self.nurses:
+            if (n.is_night_dedicated or n.can_two_shift
+                    or n.is_part_time or n.group == Group.CHARGE):
+                continue
+            night_total = sum(self.sv[n.id][d][Shift.N] for d in self.days)
+            self.model.add(night_total >= 2)
+
     # ── Soft 목적함수 ─────────────────────────────────────────────────────────
 
     def _build_objective(self):
@@ -733,6 +755,8 @@ class NurseScheduler:
         self._c_off_fairness_hard()
         self._c_leader_per_shift()
         self._c_first_year_limit()
+        self._c_max_night_per_nurse()
+        self._c_min_night_per_nurse()
 
         print("[Scheduler] Soft 목적함수 설정 중...")
         penalties, rewards = self._build_objective()
