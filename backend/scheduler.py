@@ -340,39 +340,31 @@ class NurseScheduler:
                 # 상한 = 해당 월 평일×8h (일반 목표시간과 동일 = 공휴일·주말 제외)
                 self.model.add(total_hours <= self.target_h)
             elif n.is_part_time:
-                # 주2일제: 주당 최소 2일 조건이 우선 → 상한만 완화 적용
-                # 하한은 weekly constraint 가 보장, 상한은 target+16h(2일 여유)
-                self.model.add(total_hours <= self.part_time_target_h + 16)
+                # 주2일제: weekly 조건이 하한 보장, 상한은 넉넉하게 target+24h
+                self.model.add(total_hours <= self.part_time_target_h + 24)
                 # 주 단위(월~일) 최소 2일 근무
                 self._c_part_time_weekly(n)
 
     # ── Hard: 주2일제 주 단위 최소 근무 ──────────────────────────────────────────
 
     def _c_part_time_weekly(self, n: "Nurse"):
-        """주2일제: 월~일 단위 주마다 최소 2일 근무.
-        해당 주에 월내 날짜가 2일 미만이면 그 날 수만큼만 요구."""
+        """주2일제: ISO 주(월~일) 단위로 최소 2일 근무.
+        월내 날짜가 5일 미만인 부분 주(월 초/말 짤린 주)는 건너뜀."""
         import datetime
-        work_shifts = [s for s in ALL_WORK_WITH_EDU]
-        # 월 첫날의 요일(0=월 … 6=일) 기준으로 주 그룹화
-        for start_day in range(1, self.num_days + 1):
-            dt = datetime.date(self.cfg.year, self.cfg.month, start_day)
-            if dt.weekday() != 0 and start_day != 1:  # 월요일 또는 1일만 주 시작
+        # ISO 주번호별로 월내 날짜 수집
+        week_map: dict[int, list[int]] = {}
+        for d in self.days:
+            iso_week = datetime.date(self.cfg.year, self.cfg.month, d).isocalendar()[1]
+            week_map.setdefault(iso_week, []).append(d)
+
+        for week_days in week_map.values():
+            if len(week_days) < 5:   # 부분 주 건너뜀
                 continue
-            # 이번 주에 속하는 날짜 수집
-            week_days = []
-            for d in range(start_day, self.num_days + 1):
-                dt2 = datetime.date(self.cfg.year, self.cfg.month, d)
-                if dt2.weekday() == 0 and d != start_day:
-                    break  # 다음 주 월요일
-                week_days.append(d)
-            if not week_days:
-                continue
-            min_work = min(2, len(week_days))
             work_count = sum(
                 self.sv[n.id][d][s]
-                for d in week_days for s in work_shifts
+                for d in week_days for s in ALL_WORK_WITH_EDU
             )
-            self.model.add(work_count >= min_work)
+            self.model.add(work_count >= 2)
 
     # ── Hard: 최소 오프 보장 ─────────────────────────────────────────────────
 
