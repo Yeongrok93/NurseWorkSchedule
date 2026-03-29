@@ -340,9 +340,9 @@ class NurseScheduler:
                 # 상한 = 해당 월 평일×8h (일반 목표시간과 동일 = 공휴일·주말 제외)
                 self.model.add(total_hours <= self.target_h)
             elif n.is_part_time:
-                # 주2일제: 목표시간 ±8h 범위 강제 (하한 없으면 solver가 최소 배정)
-                self.model.add(total_hours >= self.part_time_target_h - 8)
-                self.model.add(total_hours <= self.part_time_target_h + 8)
+                # 주2일제: 주당 최소 2일 조건이 우선 → 상한만 완화 적용
+                # 하한은 weekly constraint 가 보장, 상한은 target+16h(2일 여유)
+                self.model.add(total_hours <= self.part_time_target_h + 16)
                 # 주 단위(월~일) 최소 2일 근무
                 self._c_part_time_weekly(n)
 
