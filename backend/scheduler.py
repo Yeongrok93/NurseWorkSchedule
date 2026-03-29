@@ -436,9 +436,6 @@ class NurseScheduler:
                 self.model.add_implication(sv[d][Shift.N6], sv[d1][Shift.EDU].negated())
                 self.model.add_implication(sv[d][Shift.N],  sv[d1][Shift.D6].negated())
                 self.model.add_implication(sv[d][Shift.D6], sv[d1][Shift.N].negated())
-                # N↔6N 직접 전환 금지 (NN6N6N 등 혼합 블록 방지)
-                self.model.add_implication(sv[d][Shift.N],  sv[d1][Shift.N6].negated())
-                self.model.add_implication(sv[d][Shift.N6], sv[d1][Shift.N].negated())
 
                 # N→O→D/6D 금지, 6N→O→6D 금지
                 if d2 in self.days:
@@ -495,10 +492,13 @@ class NurseScheduler:
     def _c_night_block_3shift(self):
         for n in self.nurses:
             for d in self.days:
-                # N 연속 4개 금지
+                # 나이트 연속 4개 금지 (N + 6N 합산)
                 window = [d, d+1, d+2, d+3]
                 if all(w in self.days for w in window):
-                    self.model.add(sum(self.sv[n.id][w][Shift.N] for w in window) <= 3)
+                    self.model.add(
+                        sum(self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
+                            for w in window) <= 3
+                    )
 
                 # N 단독 근무 금지 (인접 N 또는 6N 있어야 함)
                 neighbors = [self.sv[n.id][d][Shift.N].negated()]
