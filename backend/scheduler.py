@@ -107,15 +107,16 @@ class ScheduleConfig:
     night_max_count: int = 7   # N 권장 최대 개수
 
     # Soft 가중치
-    w_request_fulfilled: int = 20
-    w_night_fairness: int    = 6
-    w_staffmix: int          = 3
-    w_noe_pattern: int       = 5
-    w_non_pattern: int       = 7   # N→O→N 패턴 지양
-    w_hours_fairness: int    = 8
-    w_night_over7: int       = 12  # N 7개 초과 패널티
-    w_night_interval: int    = 9   # 나이트 블록 간 10일 미만 패널티
-    w_shift_dist: int        = 5   # D/E/N 분배 균등
+    w_request_fulfilled: int = 10   # 희망근무 (낮춤: 형평성보다 우선순위 낮음)
+    w_night_fairness: int    = 15   # 나이트 균등 (올림: 핵심 형평성)
+    w_staffmix: int          = 12   # Staff-mix 비율 (올림: 매우 중요)
+    w_noe_pattern: int       = 5    # N→O→E 패턴
+    w_non_pattern: int       = 7    # N→O→N 패턴
+    w_hours_fairness: int    = 15   # 리메인 형평성 (올림: 매우 중요)
+    w_night_over7: int       = 8    # N 7개 초과 (낮춤: 나이트 균등과 중복)
+    w_night_interval: int    = 9    # 나이트 블록 간격
+    w_shift_dist: int        = 3    # D/E/N 분배 균등 (낮춤: 나이트 균등과 중복)
+    w_two_shift_mix: int     = 5    # 2교대 D/E/N 사용 억제 (낮춤: 3교대 혼용 허용)
 
     time_limit_seconds: int = 90
 
@@ -534,13 +535,13 @@ class NurseScheduler:
                 if req.shift in self._shifts_for[n.id]:
                     rewards.append(cfg.w_request_fulfilled * self.sv[n.id][req.day][req.shift])
 
-        # ① -b 2교대 간호사 D/E/N 사용 패널티 (6D/6N 우선 배정 유도)
+        # ① -b 2교대 간호사 D/E/N 사용 패널티 (6D/6N 선호, 3교대 혼용 허용)
         for n in self.nurses:
             if not n.can_two_shift:
                 continue
             for d in self.days:
                 for s in [Shift.D, Shift.E, Shift.N]:
-                    penalties.append(20 * self.sv[n.id][d][s])
+                    penalties.append(cfg.w_two_shift_mix * self.sv[n.id][d][s])
 
         # ② 나이트 균등 (전담자·주2일제·2교대 제외)
         # 2교대는 6D/6N 우선 → 평균 계산에서 제외
