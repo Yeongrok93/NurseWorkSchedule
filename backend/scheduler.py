@@ -761,21 +761,14 @@ class NurseScheduler:
 
     # ── 메인 ─────────────────────────────────────────────────────────────────
 
-    def solve(self) -> Optional[dict]:
-        print(f"[Scheduler] {self.cfg.year}년 {self.cfg.month}월 "
-              f"/ 간호사 {len(self.nurses)}명 / {self.num_days}일")
-        print(f"[Scheduler] 월 목표 근무시간: {self.target_h}h "
-              f"(주2일제: {self.part_time_target_h}h)")
-
-        self._build_variables()
-
+    def _register_hard_constraints(self):
         print("[Scheduler] Hard 제약 등록 중...")
         self._c_exactly_one_shift_per_day()
         self._c_fixed_requests()
         self._c_night_dedicated()
         self._c_charge_constraints()
         self._c_two_shift_pair()
-        self._c_monthly_work_hours()   # 상한선 전용 (2교대·주2일제만)
+        self._c_monthly_work_hours()
         self._c_min_off_guarantee()
         self._c_forbidden_transitions()
         self._c_night_block_3shift()
@@ -789,33 +782,69 @@ class NurseScheduler:
         self._c_max_night_per_nurse()
         self._c_min_night_per_nurse()
         self._c_min_work_hours_per_nurse()
+
+    def solve(self) -> Optional[dict]:
+        print(f"[Scheduler] {self.cfg.year}년 {self.cfg.month}월 "
+              f"/ 간호사 {len(self.nurses)}명 / {self.num_days}일")
+        print(f"[Scheduler] 월 목표 근무시간: {self.target_h}h "
+              f"(주2일제: {self.part_time_target_h}h)")
+
+        self._build_variables()
+        self._register_hard_constraints()
+
         print("[Scheduler] Soft 목적함수 설정 중...")
         penalties, rewards = self._build_objective()
         self.model.minimize(sum(penalties) - sum(rewards))
 
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = self.cfg.time_limit_seconds
-        solver.parameters.num_workers = 8
-        solver.parameters.log_search_progress = True
+        # ── Phase 1: 첫 feasible solution 확보 ───────────────────────────────
+        print("[Scheduler] [Phase 1] 초기해 탐색 (최대 60초)...")
+        p1 = cp_model.CpSolver()
+        p1.parameters.max_time_in_seconds = 60
+        p1.parameters.num_workers = 8
+        p1.parameters.stop_after_first_solution = True
+        p1.parameters.log_search_progress = True
+        status1 = p1.solve(self.model)
 
-        print(f"[Scheduler] 솔버 실행 (제한: {self.cfg.time_limit_seconds}초)...")
-        status = solver.solve(self.model)
-
-        if status == cp_model.INFEASIBLE:
-            print(f"[Scheduler] [FAIL] INFEASIBLE")
+        if status1 == cp_model.INFEASIBLE:
+            print("[Scheduler] [FAIL] Phase 1 INFEASIBLE")
             return None
 
-        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if status1 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            print(f"[Scheduler] [Phase 1] 초기해 확보 "
+                  f"(objective={p1.objective_value:.1f}) → hint 주입")
+            for n in self.nurses:
+                for d in self.days:
+                    for s in ALL_SHIFTS:
+                        self.model.add_hint(
+                            self.sv[n.id][d][s],
+                            p1.value(self.sv[n.id][d][s])
+                        )
+        else:
+            print("[Scheduler] [Phase 1] 초기해 없음 → hint 없이 Phase 2 진행")
+
+        # ── Phase 2: hint 기반 최적화 ─────────────────────────────────────────
+        print(f"[Scheduler] [Phase 2] 최적화 (최대 {self.cfg.time_limit_seconds}초)...")
+        p2 = cp_model.CpSolver()
+        p2.parameters.max_time_in_seconds = self.cfg.time_limit_seconds
+        p2.parameters.num_workers = 8
+        p2.parameters.log_search_progress = True
+        status2 = p2.solve(self.model)
+
+        if status2 == cp_model.INFEASIBLE:
+            print("[Scheduler] [FAIL] Phase 2 INFEASIBLE")
+            return None
+
+        if status2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             print(f"[Scheduler] [OK] 완료 "
-                  f"(status={solver.status_name(status)}, "
-                  f"objective={solver.objective_value:.1f})")
-            return self._extract_result(solver)
+                  f"(status={p2.status_name(status2)}, "
+                  f"objective={p2.objective_value:.1f})")
+            return self._extract_result(p2)
 
         # UNKNOWN = 시간초과. 해가 하나라도 있으면 반환.
         try:
-            obj = solver.objective_value
+            obj = p2.objective_value
             print(f"[Scheduler] [WARN] 시간초과 - 최선의 해 반환 (objective={obj:.1f})")
-            return self._extract_result(solver)
+            return self._extract_result(p2)
         except Exception:
             print(f"[Scheduler] [FAIL] 시간초과 - 해 없음")
             return None
