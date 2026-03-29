@@ -322,9 +322,9 @@ class NurseScheduler:
                 elif s == Shift.N:
                     actual = sum(self.sv[n.id][d][Shift.N] for n in self.nurses)
                     total  = actual + pairs
-                    # N: 절대 부족 금지, 상한 min+3 (N전담 감안)
+                    # N: 절대 부족 금지, 상한 min+1
                     self.model.add(total >= min_cnt)
-                    self.model.add(total <= min_cnt + 3)
+                    self.model.add(total <= min_cnt + 1)
                 else:
                     continue
 
