@@ -310,15 +310,22 @@ class NurseScheduler:
                 if s == Shift.D:
                     actual = sum(self.sv[n.id][d][Shift.D] for n in self.nurses)
                     total  = actual + pairs
+                    # D: 헬프 가능 → [min-1, min+1]
+                    self.model.add(total >= min_cnt - 1)
+                    self.model.add(total <= min_cnt + 1)
                 elif s == Shift.E:
                     actual = sum(self.sv[n.id][d][Shift.E] for n in self.nurses)
                     total  = actual + pairs
+                    # E: 헬프 가능 → [min-1, min+1]
+                    self.model.add(total >= min_cnt - 1)
+                    self.model.add(total <= min_cnt + 1)
                 elif s == Shift.N:
                     actual = sum(self.sv[n.id][d][Shift.N] for n in self.nurses)
                     total  = actual + pairs
+                    # N: 다른 부서 지원 불가 → 절대 부족 금지, 상한 없음
+                    self.model.add(total >= min_cnt)
                 else:
                     continue
-                self.model.add(total >= min_cnt - 1)  # 외부 헬프 가능 → 1명 부족 허용
 
     # ── Hard: 월 목표 근무시간 ────────────────────────────────────────────────
 
