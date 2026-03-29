@@ -434,6 +434,7 @@ class NurseScheduler:
                 self.model.add_implication(sv[d][Shift.N6], sv[d1][Shift.D].negated())
                 self.model.add_implication(sv[d][Shift.N6], sv[d1][Shift.E].negated())
                 self.model.add_implication(sv[d][Shift.N6], sv[d1][Shift.EDU].negated())
+                # 6N→N 허용 (나이트 4연속은 N+6N 합산 윈도우로 처리)
                 self.model.add_implication(sv[d][Shift.N],  sv[d1][Shift.D6].negated())
                 self.model.add_implication(sv[d][Shift.D6], sv[d1][Shift.N].negated())
 
@@ -492,7 +493,7 @@ class NurseScheduler:
     def _c_night_block_3shift(self):
         for n in self.nurses:
             for d in self.days:
-                # 나이트 연속 4개 금지 (N + 6N 합산)
+                # 나이트 연속 4개 금지 (N + 6N 합산, 전체 적용)
                 window = [d, d+1, d+2, d+3]
                 if all(w in self.days for w in window):
                     self.model.add(
