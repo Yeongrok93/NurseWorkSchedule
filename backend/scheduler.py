@@ -121,7 +121,7 @@ class ScheduleConfig:
     w_night_over7: int       = 40   # N 7개 초과 강력 억제
     w_night_interval: int    = 9    # 나이트 블록 간격
     w_shift_dist: int        = 3    # D/E/N 분배 균등 (낮춤: 나이트 균등과 중복)
-    w_two_shift_mix: int     = 3    # 2교대 D/E/N 사용 억제 (살짝 낮춤: 3교대 혼용 더 허용)
+    w_two_shift_mix: int     = 15   # 2교대 D/E/N 사용 억제 (강하게: 6D/6N 우선 유도)
     w_consec_night4: int     = 200  # 4연속 나이트 강력 억제 (N+6N 합산)
     w_staff_short: int       = 60   # 일별 최소인원 미달 패널티 (D/E/N 공통)
 
@@ -921,6 +921,7 @@ class NurseScheduler:
                 "is_part_time": n.is_part_time,
                 "counts": cnt,
                 "total_work": sum(cnt[s.value] for s in ALL_WORK_WITH_EDU),
+                "total_nights": cnt[Shift.N.value] + cnt[Shift.N6.value],
                 "total_hours": total_hours,
                 "target_hours": target,
                 "remain": remain,

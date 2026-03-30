@@ -97,7 +97,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 </th>
               )
             })}
-            {[...STAT_SHIFTS, '근무','시간','리메인','요청'].map(h => (
+            {[...STAT_SHIFTS, '야간','근무','시간','리메인','요청'].map(h => (
               <th key={h} style={{ ...thBase(), minWidth: 28 }}>{h}</th>
             ))}
           </tr>
@@ -182,6 +182,14 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                     {st.counts[s] ?? 0}
                   </td>
                 ))}
+                {/* 야간 합계 (N+6N) */}
+                <td style={{
+                  padding: '3px 4px', textAlign: 'center', fontWeight: 700, fontSize: 11,
+                  color: '#7c3aed',
+                  background: 'var(--color-background-secondary)',
+                }}>
+                  {st?.total_nights ?? 0}
+                </td>
                 {/* 총 근무 */}
                 <td style={{
                   padding: '3px 4px', textAlign: 'center', fontWeight: 700, fontSize: 11,
