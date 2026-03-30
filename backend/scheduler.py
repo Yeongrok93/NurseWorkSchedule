@@ -670,10 +670,8 @@ class NurseScheduler:
                     self.model.add(expr <= 2).only_enforce_if(noe.negated())
                     penalties.append(cfg.w_noe_pattern * noe)
 
-        # ⑤ N→O→N 패턴 페널티 (나이트 쉬고 바로 나이트)
+        # ⑤ N→O→N 패턴 페널티 (나이트 쉬고 바로 나이트, 전체 간호사)
         for n in self.nurses:
-            if n.is_night_dedicated:
-                continue
             for d in self.days:
                 if d+1 in self.days and d+2 in self.days:
                     non_flag = self.model.new_bool_var(f"non_{n.id}_{d}")
