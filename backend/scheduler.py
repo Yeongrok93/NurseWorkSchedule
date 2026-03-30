@@ -123,6 +123,7 @@ class ScheduleConfig:
     w_shift_dist: int        = 3    # D/E/N 분배 균등 (낮춤: 나이트 균등과 중복)
     w_two_shift_mix: int     = 3    # 2교대 D/E/N 사용 억제 (살짝 낮춤: 3교대 혼용 더 허용)
     w_consec_night4: int     = 200  # 4연속 나이트 강력 억제 (N+6N 합산)
+    w_staff_short: int       = 60   # 일별 최소인원 미달 패널티 (D/E/N 공통)
 
     time_limit_seconds: int = 180
 
@@ -326,32 +327,21 @@ class NurseScheduler:
     # ── Hard: 최소 인원 (6D/6N 카운트 포함) ──────────────────────────────────
 
     def _c_min_staff_per_day(self):
+        """상한선만 hard 유지. 하한 미달은 soft(_build_objective ⑪)로 처리."""
         for d in self.days:
-            dtype  = self._dt(d)
-            req    = self.cfg.min_staff[dtype]
-            pairs  = sum(self.sv[n.id][d][Shift.D6] for n in self.nurses)
-
+            dtype = self._dt(d)
+            req   = self.cfg.min_staff[dtype]
+            pairs = sum(self.sv[n.id][d][Shift.D6] for n in self.nurses)
             for s, min_cnt in req.items():
                 if s == Shift.D:
                     actual = sum(self.sv[n.id][d][Shift.D] for n in self.nurses)
-                    total  = actual + pairs
-                    # D: 헬프 가능 → [min-1, min]
-                    self.model.add(total >= min_cnt - 1)
-                    self.model.add(total <= min_cnt)
+                    self.model.add(actual + pairs <= min_cnt + 1)
                 elif s == Shift.E:
                     actual = sum(self.sv[n.id][d][Shift.E] for n in self.nurses)
-                    total  = actual + pairs
-                    # E: 헬프 가능 → [min-1, min]
-                    self.model.add(total >= min_cnt - 1)
-                    self.model.add(total <= min_cnt)
+                    self.model.add(actual + pairs <= min_cnt + 1)
                 elif s == Shift.N:
                     actual = sum(self.sv[n.id][d][Shift.N] for n in self.nurses)
-                    total  = actual + pairs
-                    # N: 절대 부족 금지, 상한 min+1
-                    self.model.add(total >= min_cnt)
-                    self.model.add(total <= min_cnt + 1)
-                else:
-                    continue
+                    self.model.add(actual + pairs <= min_cnt + 1)
 
     # ── Hard: 월 목표 근무시간 ────────────────────────────────────────────────
 
@@ -391,20 +381,6 @@ class NurseScheduler:
                 for d in week_days for s in ALL_WORK_WITH_EDU
             )
             self.model.add(work_count >= 2)
-
-    # ── Hard: 최소 오프 보장 ─────────────────────────────────────────────────
-
-    def _c_min_off_guarantee(self):
-        """주말 + 법정공휴일 수만큼 오프 최소 보장.
-        N전담·2교대·주2일제 제외 (이미 별도 규칙으로 제어)."""
-        weekend_holiday_days = sum(
-            1 for d in self.days if self._dt(d) != "weekday"
-        )
-        for n in self.nurses:
-            if n.is_night_dedicated or n.can_two_shift or n.is_part_time:
-                continue
-            off_count = sum(self.sv[n.id][d][Shift.O] for d in self.days)
-            self.model.add(off_count >= weekend_holiday_days)
 
     # ── Hard: 오프 균등 (풀타임만) ────────────────────────────────────────────
 
@@ -574,12 +550,6 @@ class NurseScheduler:
             for s in WORK_3:
                 leader_cnt = sum(self.sv[n.id][d][s] for n in leaders)
                 self.model.add(leader_cnt + pairs >= 1)
-
-    def _c_first_year_limit(self):
-        first_year = [n for n in self.nurses if n.group == Group.FIRST]
-        assert len(first_year) <= self.cfg.max_first_year, (
-            f"1년차 수({len(first_year)}) > 허용({self.cfg.max_first_year})"
-        )
 
     # ── Hard: 일반 간호사 월간 N 최대 8개 ────────────────────────────────────────
 
@@ -792,6 +762,20 @@ class NurseScheduler:
                 self.model.add(over3 >= total_n - 3)
                 penalties.append(cfg.w_consec_night4 * over3)
 
+        # ⑪ 일별 최소인원 미달 패널티 (D/E/N 공통, 1명 미달까지 허용)
+        for d in self.days:
+            dtype = self._dt(d)
+            req   = self.cfg.min_staff[dtype]
+            pairs = sum(self.sv[n.id][d][Shift.D6] for n in self.nurses)
+            for s, min_cnt in req.items():
+                if s not in (Shift.D, Shift.E, Shift.N):
+                    continue
+                actual = sum(self.sv[n.id][d][s] for n in self.nurses)
+                total  = actual + (pairs if s in (Shift.D, Shift.N) else actual)
+                short  = self.model.new_int_var(0, 2, f"short_{s.value}_{d}")
+                self.model.add(short >= min_cnt - (actual + pairs))
+                penalties.append(cfg.w_staff_short * short)
+
         # ⑩ 풀타임(3교대+2교대) remain 형평성
         full_time = [n for n in self.nurses
                      if not n.is_night_dedicated and not n.is_part_time]
@@ -851,7 +835,6 @@ class NurseScheduler:
         self._c_charge_constraints()
         self._c_two_shift_pair()
         self._c_monthly_work_hours()
-        self._c_min_off_guarantee()
         self._c_forbidden_transitions()
         self._c_night_block_3shift()
         self._c_night_block_2shift()
@@ -860,7 +843,6 @@ class NurseScheduler:
         self._c_min_staff_per_day()
         self._c_remain_spread_hard()
         self._c_leader_per_shift()
-        self._c_first_year_limit()
         self._c_max_night_per_nurse()
         self._c_min_night_per_nurse()
 
