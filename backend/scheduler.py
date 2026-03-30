@@ -269,6 +269,16 @@ class NurseScheduler:
                 == self.cfg.night_dedicated_count
             )
 
+    def _c_three_shift_only(self):
+        """3교대 간호사(can_two_shift=False)는 6D/6N 배정 금지.
+        → NN6N6N 패턴 구조적 차단 + 모델 단순화."""
+        for n in self.nurses:
+            if n.can_two_shift or n.is_night_dedicated:
+                continue
+            for d in self.days:
+                self.model.add(self.sv[n.id][d][Shift.D6] == 0)
+                self.model.add(self.sv[n.id][d][Shift.N6] == 0)
+
     # ── Hard: 차지 제약 ───────────────────────────────────────────────────────
 
     def _c_charge_constraints(self):
@@ -493,20 +503,11 @@ class NurseScheduler:
     def _c_night_block_3shift(self):
         for n in self.nurses:
             for d in self.days:
+                # N 연속 4개 금지 (3교대는 6N 배정 자체가 금지되므로 N만으로 충분)
                 window = [d, d+1, d+2, d+3]
-                if not all(w in self.days for w in window):
-                    continue
-                if n.can_two_shift:
-                    # 2교대: 6N 연속은 _c_night_block_2shift(≤2)로 처리
-                    # N 단독 연속만 제한
+                if all(w in self.days for w in window):
                     self.model.add(
                         sum(self.sv[n.id][w][Shift.N] for w in window) <= 3
-                    )
-                else:
-                    # 3교대: N+6N 합산 ≤3 (NNNN, NN6N6N 등 차단)
-                    self.model.add(
-                        sum(self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
-                            for w in window) <= 3
                     )
 
                 # N 단독 근무 금지 (인접 N 또는 6N 있어야 함)
@@ -775,6 +776,7 @@ class NurseScheduler:
         self._c_exactly_one_shift_per_day()
         self._c_fixed_requests()
         self._c_night_dedicated()
+        self._c_three_shift_only()
         self._c_charge_constraints()
         self._c_two_shift_pair()
         self._c_monthly_work_hours()
