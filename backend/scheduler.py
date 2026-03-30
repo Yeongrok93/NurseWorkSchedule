@@ -493,9 +493,17 @@ class NurseScheduler:
     def _c_night_block_3shift(self):
         for n in self.nurses:
             for d in self.days:
-                # 나이트 연속 4개 금지 (N + 6N 합산, 전체 적용)
                 window = [d, d+1, d+2, d+3]
-                if all(w in self.days for w in window):
+                if not all(w in self.days for w in window):
+                    continue
+                if n.can_two_shift:
+                    # 2교대: 6N 연속은 _c_night_block_2shift(≤2)로 처리
+                    # N 단독 연속만 제한
+                    self.model.add(
+                        sum(self.sv[n.id][w][Shift.N] for w in window) <= 3
+                    )
+                else:
+                    # 3교대: N+6N 합산 ≤3 (NNNN, NN6N6N 등 차단)
                     self.model.add(
                         sum(self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
                             for w in window) <= 3
