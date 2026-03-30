@@ -117,6 +117,7 @@ class ScheduleConfig:
     w_night_interval: int    = 9    # 나이트 블록 간격
     w_shift_dist: int        = 3    # D/E/N 분배 균등 (낮춤: 나이트 균등과 중복)
     w_two_shift_mix: int     = 3    # 2교대 D/E/N 사용 억제 (살짝 낮춤: 3교대 혼용 더 허용)
+    w_consec_night4: int     = 200  # 4연속 나이트 강력 억제 (N+6N 합산)
 
     time_limit_seconds: int = 180
 
@@ -268,16 +269,6 @@ class NurseScheduler:
                 sum(self.sv[n.id][d][Shift.N] for d in self.days)
                 == self.cfg.night_dedicated_count
             )
-
-    def _c_three_shift_only(self):
-        """3교대 간호사(can_two_shift=False)는 6D/6N 배정 금지.
-        → NN6N6N 패턴 구조적 차단 + 모델 단순화."""
-        for n in self.nurses:
-            if n.can_two_shift or n.is_night_dedicated:
-                continue
-            for d in self.days:
-                self.model.add(self.sv[n.id][d][Shift.D6] == 0)
-                self.model.add(self.sv[n.id][d][Shift.N6] == 0)
 
     # ── Hard: 차지 제약 ───────────────────────────────────────────────────────
 
@@ -503,7 +494,7 @@ class NurseScheduler:
     def _c_night_block_3shift(self):
         for n in self.nurses:
             for d in self.days:
-                # N 연속 4개 금지 (3교대는 6N 배정 자체가 금지되므로 N만으로 충분)
+                # N 연속 4개 금지
                 window = [d, d+1, d+2, d+3]
                 if all(w in self.days for w in window):
                     self.model.add(
@@ -743,7 +734,22 @@ class NurseScheduler:
                 self.model.add_abs_equality(abs_d, diff)
                 penalties.append(cfg.w_shift_dist * abs_d)
 
-        # ⑨ 리메인 형평성 (N전담·주2일제 제외, 2교대 포함)
+        # ⑨ 4연속 나이트 억제 (N+6N 합산, 전체 간호사)
+        for n in self.nurses:
+            for d in self.days:
+                window = [d, d+1, d+2, d+3]
+                if not all(w in self.days for w in window):
+                    continue
+                night4 = self.model.new_bool_var(f"n4_{n.id}_{d}")
+                total_n = sum(
+                    self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
+                    for w in window
+                )
+                self.model.add(total_n >= 4).only_enforce_if(night4)
+                self.model.add(total_n <= 3).only_enforce_if(night4.negated())
+                penalties.append(cfg.w_consec_night4 * night4)
+
+        # ⑩ 리메인 형평성 (N전담·주2일제 제외, 2교대 포함)
         remain_nurses = [n for n in self.nurses
                          if not n.is_night_dedicated and not n.is_part_time]
         if remain_nurses:
@@ -776,7 +782,6 @@ class NurseScheduler:
         self._c_exactly_one_shift_per_day()
         self._c_fixed_requests()
         self._c_night_dedicated()
-        self._c_three_shift_only()
         self._c_charge_constraints()
         self._c_two_shift_pair()
         self._c_monthly_work_hours()
