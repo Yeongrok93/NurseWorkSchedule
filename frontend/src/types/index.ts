@@ -42,6 +42,7 @@ export interface NurseStats {
   is_part_time: boolean
   counts: Record<string, number>
   total_work: number
+  total_nights: number
   total_hours: number
   target_hours: number
   remain: number
