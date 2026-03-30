@@ -125,7 +125,7 @@ class ScheduleConfig:
     w_consec_night4: int     = 200  # 4연속 나이트 강력 억제 (N+6N 합산)
     w_staff_short: int       = 60   # 일별 최소인원 미달 패널티 (D/E/N 공통)
 
-    time_limit_seconds: int = 180
+    time_limit_seconds: int = 300
 
 
 # ─── 유틸 ────────────────────────────────────────────────────────────────────
@@ -859,6 +859,7 @@ class NurseScheduler:
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self.cfg.time_limit_seconds
+        solver.parameters.relative_gap_limit = 0.01  # 이론적 최적의 1% 이내면 조기 종료
         solver.parameters.num_workers = 8
         solver.parameters.log_search_progress = True
 
