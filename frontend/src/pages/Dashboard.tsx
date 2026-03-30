@@ -23,7 +23,7 @@ const DEFAULT_CONFIG: ConstraintConfig = {
   max_n6_block: 2,
   night_min_gap: 10,
   night_max_count: 7,
-  time_limit_seconds: 90,
+  time_limit_seconds: 180,
 }
 
 const GROUPS: GroupType[] = ['charge', 'leader', 'mid', 'junior', 'first']

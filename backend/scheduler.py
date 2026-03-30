@@ -735,19 +735,19 @@ class NurseScheduler:
                 penalties.append(cfg.w_shift_dist * abs_d)
 
         # ⑨ 4연속 나이트 억제 (N+6N 합산, 전체 간호사)
+        # over3 = max(0, sum(N+6N in window) - 3) → 초과량만큼 패널티
         for n in self.nurses:
             for d in self.days:
                 window = [d, d+1, d+2, d+3]
                 if not all(w in self.days for w in window):
                     continue
-                night4 = self.model.new_bool_var(f"n4_{n.id}_{d}")
                 total_n = sum(
                     self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
                     for w in window
                 )
-                self.model.add(total_n >= 4).only_enforce_if(night4)
-                self.model.add(total_n <= 3).only_enforce_if(night4.negated())
-                penalties.append(cfg.w_consec_night4 * night4)
+                over3 = self.model.new_int_var(0, 4, f"n4_{n.id}_{d}")
+                self.model.add(over3 >= total_n - 3)
+                penalties.append(cfg.w_consec_night4 * over3)
 
         # ⑩ 리메인 형평성 (N전담·주2일제 제외, 2교대 포함)
         remain_nurses = [n for n in self.nurses
