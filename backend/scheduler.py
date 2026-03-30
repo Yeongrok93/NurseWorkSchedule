@@ -864,7 +864,23 @@ class NurseScheduler:
         solver.parameters.log_search_progress = True
 
         print(f"[Scheduler] 솔버 실행 (제한: {self.cfg.time_limit_seconds}초)...")
-        status = solver.solve(self.model)
+
+        status = cp_model.UNKNOWN
+        for attempt in range(3):
+            if attempt > 0:
+                solver.parameters.random_seed = attempt
+                print(f"[Scheduler] [RETRY] 해 없음 - 시드 {attempt}로 재시도 ({attempt+1}/3)...")
+            status = solver.solve(self.model)
+            if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                break
+            # 시간초과지만 해가 있으면 반환
+            try:
+                solver.objective_value
+                break
+            except Exception:
+                pass
+            if status == cp_model.INFEASIBLE:
+                break  # INFEASIBLE은 재시도해도 의미 없음
 
         if status == cp_model.INFEASIBLE:
             print("[Scheduler] [FAIL] INFEASIBLE")
@@ -882,7 +898,7 @@ class NurseScheduler:
             print(f"[Scheduler] [WARN] 시간초과 - 최선의 해 반환 (objective={obj:.1f})")
             return self._extract_result(solver)
         except Exception:
-            print(f"[Scheduler] [FAIL] 시간초과 - 해 없음")
+            print(f"[Scheduler] [FAIL] 3회 시도 모두 해 없음")
             return None
 
     def _extract_result(self, solver: cp_model.CpSolver) -> dict:
