@@ -112,7 +112,8 @@ class ScheduleConfig:
     w_staffmix: int          = 12   # Staff-mix 비율 (올림: 매우 중요)
     w_noe_pattern: int       = 5    # N→O→E 패턴
     w_non_pattern: int       = 7    # N→O→N 패턴
-    w_hours_fairness: int    = 15   # 리메인 형평성 (올림: 매우 중요)
+    w_hours_shortage: int    = 60   # 목표 근무시간 부족분 강한 억제
+    w_hours_fairness: int    = 8    # remain 편차는 부족분보다 약하게
     w_night_over7: int       = 40   # N 7개 초과 강력 억제
     w_night_interval: int    = 9    # 나이트 블록 간격
     w_shift_dist: int        = 3    # D/E/N 분배 균등 (낮춤: 나이트 균등과 중복)
@@ -764,6 +765,9 @@ class NurseScheduler:
                 rem = self.model.new_int_var(-self.num_days, self.num_days, f"rem_{n.id}")
                 self.model.add(rem * 8 == total_h - target_days * 8)
                 remain_vars.append(rem)
+                shortage = self.model.new_int_var(0, self.num_days, f"short_{n.id}")
+                self.model.add(shortage >= -rem - 2)
+                penalties.append(cfg.w_hours_shortage * shortage)
             avg_rem = self.model.new_int_var(-self.num_days, self.num_days, "avg_rem")
             self.model.add(sum(remain_vars) == avg_rem * len(remain_nurses))
             for i, rv in enumerate(remain_vars):
@@ -797,7 +801,6 @@ class NurseScheduler:
         self._c_first_year_limit()
         self._c_max_night_per_nurse()
         self._c_min_night_per_nurse()
-        self._c_min_work_hours_per_nurse()
 
     def solve(self) -> Optional[dict]:
         print(f"[Scheduler] {self.cfg.year}년 {self.cfg.month}월 "
