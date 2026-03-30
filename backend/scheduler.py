@@ -112,8 +112,12 @@ class ScheduleConfig:
     w_staffmix: int          = 12   # Staff-mix 비율 (올림: 매우 중요)
     w_noe_pattern: int       = 5    # N→O→E 패턴
     w_non_pattern: int       = 7    # N→O→N 패턴
-    w_hours_shortage: int    = 60   # 목표 근무시간 부족분 강한 억제
-    w_hours_fairness: int    = 8    # remain 편차는 부족분보다 약하게
+    w_hours_shortage: int    = 0    # unused: remain 절대부족은 직접 억제하지 않음
+    w_hours_target_dev: int  = 0    # unused: target 근접보다 집단 형평성 우선
+    w_hours_spread: int      = 120  # 풀타임 집단 remain spread 기본 억제
+    w_hours_spread_hard: int = 2000 # remain 차이 1일 초과는 semi-hard 수준으로 억제
+    w_hours_fairness: int    = 80   # 풀타임 remain 형평성 핵심
+    w_hours_band: int        = 220  # center_rem 에서 1일 초과 이탈 추가 억제
     w_night_over7: int       = 40   # N 7개 초과 강력 억제
     w_night_interval: int    = 9    # 나이트 블록 간격
     w_shift_dist: int        = 3    # D/E/N 분배 균등 (낮춤: 나이트 균등과 중복)
@@ -271,6 +275,24 @@ class NurseScheduler:
                 == self.cfg.night_dedicated_count
             )
 
+    def _c_night_dedicated_block_gap(self):
+        for n in self.nurses:
+            if not n.is_night_dedicated:
+                continue
+            for d in self.days:
+                if d + 2 not in self.days:
+                    continue
+                block_end = self.model.new_bool_var(f"nd_block_end_{n.id}_{d}")
+                self.model.add_bool_and([
+                    self.sv[n.id][d][Shift.N],
+                    self.sv[n.id][d + 1][Shift.O],
+                ]).only_enforce_if(block_end)
+                self.model.add_bool_or([
+                    self.sv[n.id][d][Shift.N].negated(),
+                    self.sv[n.id][d + 1][Shift.O].negated(),
+                ]).only_enforce_if(block_end.negated())
+                self.model.add_implication(block_end, self.sv[n.id][d + 2][Shift.N].negated())
+
     # ── Hard: 차지 제약 ───────────────────────────────────────────────────────
 
     def _c_charge_constraints(self):
@@ -334,10 +356,7 @@ class NurseScheduler:
     # ── Hard: 월 목표 근무시간 ────────────────────────────────────────────────
 
     def _c_monthly_work_hours(self):
-        """근무시간 상한선만 적용 (하한선 없음 → off_fairness로 균형 유지).
-        - 2교대: (평일수 × 8h) 이하 → 12h shift 기준 최대 약 14회
-        - 주2일제: 주2일 목표시간 이하
-        - 일반/N전담: 상한선 없음 (off_fairness + min_staff 로 자연 조정)"""
+        """주2일제 인력에만 월 근무시간 상한 적용."""
         for n in self.nurses:
             if n.is_night_dedicated or (not n.can_two_shift and not n.is_part_time):
                 continue
@@ -346,10 +365,7 @@ class NurseScheduler:
                 for d in self.days
                 for s in ALL_WORK_WITH_EDU
             )
-            if n.can_two_shift:
-                # 상한 = 해당 월 평일×8h (일반 목표시간과 동일 = 공휴일·주말 제외)
-                self.model.add(total_hours <= self.target_h)
-            elif n.is_part_time:
+            if n.is_part_time:
                 # 주2일제: weekly 조건이 하한 보장, 상한은 넉넉하게 target+24h
                 self.model.add(total_hours <= self.part_time_target_h + 24)
                 # 주 단위(월~일) 최소 2일 근무
@@ -411,6 +427,32 @@ class NurseScheduler:
     # 근무시간 형평성은 soft penalty(⑨)로만 처리 — hard 제약 없음
 
     # ── Hard: shift 전환 금지 ─────────────────────────────────────────────────
+
+    def _c_remain_spread_hard(self):
+        full_time = [n for n in self.nurses
+                     if not n.is_night_dedicated and not n.is_part_time]
+        if not full_time:
+            return
+
+        rem_min = -self.num_days
+        rem_max = self.num_days
+        remain_vars = []
+        for n in full_time:
+            total_h = self.model.new_int_var(0, self.num_days * 12, f"hard_total_h_{n.id}")
+            self.model.add(total_h == sum(
+                SHIFT_HOURS[s] * self.sv[n.id][d][s]
+                for d in self.days for s in ALL_WORK_WITH_EDU
+            ))
+            rem = self.model.new_int_var(rem_min, rem_max, f"hard_rem_{n.id}")
+            self.model.add(rem * 8 == total_h - self.target_h)
+            remain_vars.append(rem)
+
+        min_rem = self.model.new_int_var(rem_min, rem_max, "hard_min_rem")
+        max_rem = self.model.new_int_var(rem_min, rem_max, "hard_max_rem")
+        for rem in remain_vars:
+            self.model.add(rem >= min_rem)
+            self.model.add(rem <= max_rem)
+        self.model.add(max_rem - min_rem <= 1)
 
     def _c_forbidden_transitions(self):
         for n in self.nurses:
@@ -750,32 +792,51 @@ class NurseScheduler:
                 self.model.add(over3 >= total_n - 3)
                 penalties.append(cfg.w_consec_night4 * over3)
 
-        # ⑩ 리메인 형평성 (N전담·주2일제 제외, 2교대 포함)
-        remain_nurses = [n for n in self.nurses
-                         if not n.is_night_dedicated and not n.is_part_time]
-        if remain_nurses:
-            target_days = self.target_h // 8
+        # ⑩ 풀타임(3교대+2교대) remain 형평성
+        full_time = [n for n in self.nurses
+                     if not n.is_night_dedicated and not n.is_part_time]
+        if full_time:
+            target_h = self.target_h
+            rem_min = -self.num_days
+            rem_max = self.num_days
             remain_vars = []
-            for n in remain_nurses:
-                total_h = sum(
+
+            for n in full_time:
+                total_h = self.model.new_int_var(0, self.num_days * 12, f"total_h_{n.id}")
+                self.model.add(total_h == sum(
                     SHIFT_HOURS[s] * self.sv[n.id][d][s]
                     for d in self.days for s in ALL_WORK_WITH_EDU
-                )
-                # remain = total_h/8 - target_days  (범위: -31 ~ +31)
+                ))
+
                 rem = self.model.new_int_var(-self.num_days, self.num_days, f"rem_{n.id}")
-                self.model.add(rem * 8 == total_h - target_days * 8)
+                self.model.add(rem * 8 == total_h - target_h)
                 remain_vars.append(rem)
-                shortage = self.model.new_int_var(0, self.num_days, f"short_{n.id}")
-                self.model.add(shortage >= -rem - 2)
-                penalties.append(cfg.w_hours_shortage * shortage)
-            avg_rem = self.model.new_int_var(-self.num_days, self.num_days, "avg_rem")
-            self.model.add(sum(remain_vars) == avg_rem * len(remain_nurses))
+
+            min_rem = self.model.new_int_var(rem_min, rem_max, "min_rem")
+            max_rem = self.model.new_int_var(rem_min, rem_max, "max_rem")
+            for rem in remain_vars:
+                self.model.add(rem >= min_rem)
+                self.model.add(rem <= max_rem)
+            spread_over = self.model.new_int_var(0, self.num_days * 2, "rem_spread_over")
+            spread_hard_over = self.model.new_int_var(0, self.num_days * 2, "rem_spread_hard_over")
+            spread_gap = self.model.new_int_var(0, self.num_days * 2, "rem_spread_gap")
+            self.model.add(spread_gap == max_rem - min_rem)
+            # spread 자체는 완만하게 누르고, 1일 초과분은 사실상 semi-hard로 강하게 억제
+            self.model.add(spread_over >= spread_gap - 1)
+            self.model.add(spread_hard_over >= spread_gap - 1)
+            penalties.append(cfg.w_hours_spread * spread_over)
+            penalties.append(cfg.w_hours_spread_hard * spread_hard_over)
+
+            center_rem = self.model.new_int_var(rem_min, rem_max, "center_rem")
             for i, rv in enumerate(remain_vars):
                 diff  = self.model.new_int_var(-self.num_days * 2, self.num_days * 2, f"rem_d_{i}")
                 abs_d = self.model.new_int_var(0, self.num_days * 2, f"rem_a_{i}")
-                self.model.add(diff == rv - avg_rem)
+                band_over = self.model.new_int_var(0, self.num_days * 2, f"rem_band_{i}")
+                self.model.add(diff == rv - center_rem)
                 self.model.add_abs_equality(abs_d, diff)
+                self.model.add(band_over >= abs_d - 1)
                 penalties.append(cfg.w_hours_fairness * abs_d)
+                penalties.append(cfg.w_hours_band * band_over)
 
         return penalties, rewards
 
@@ -786,6 +847,7 @@ class NurseScheduler:
         self._c_exactly_one_shift_per_day()
         self._c_fixed_requests()
         self._c_night_dedicated()
+        self._c_night_dedicated_block_gap()
         self._c_charge_constraints()
         self._c_two_shift_pair()
         self._c_monthly_work_hours()
@@ -796,7 +858,7 @@ class NurseScheduler:
         self._c_min_consecutive_work()
         self._c_max_consecutive_work()
         self._c_min_staff_per_day()
-        self._c_off_fairness_hard()
+        self._c_remain_spread_hard()
         self._c_leader_per_shift()
         self._c_first_year_limit()
         self._c_max_night_per_nurse()
