@@ -452,7 +452,7 @@ class NurseScheduler:
         for rem in remain_vars:
             self.model.add(rem >= min_rem)
             self.model.add(rem <= max_rem)
-        self.model.add(max_rem - min_rem <= 1)
+        self.model.add(max_rem - min_rem <= 2)
 
     def _c_forbidden_transitions(self):
         for n in self.nurses:
