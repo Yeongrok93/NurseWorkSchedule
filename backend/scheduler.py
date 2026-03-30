@@ -125,7 +125,7 @@ class ScheduleConfig:
     w_consec_night4: int     = 200  # 4연속 나이트 강력 억제 (N+6N 합산)
     w_staff_short: int       = 60   # 일별 최소인원 미달 패널티 (D/E/N 공통)
 
-    time_limit_seconds: int = 300
+    time_limit_seconds: int = 360
 
 
 # ─── 유틸 ────────────────────────────────────────────────────────────────────
