@@ -877,55 +877,29 @@ class NurseScheduler:
         penalties, rewards = self._build_objective()
         self.model.minimize(sum(penalties) - sum(rewards))
 
-        # ── Phase 1: 첫 feasible solution 확보 ───────────────────────────────
-        print("[Scheduler] [Phase 1] 초기해 탐색 (최대 60초)...")
-        p1 = cp_model.CpSolver()
-        p1.parameters.max_time_in_seconds = 60
-        p1.parameters.num_workers = 8
-        p1.parameters.stop_after_first_solution = True
-        p1.parameters.log_search_progress = True
-        status1 = p1.solve(self.model)
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = self.cfg.time_limit_seconds
+        solver.parameters.num_workers = 8
+        solver.parameters.log_search_progress = True
 
-        if status1 == cp_model.INFEASIBLE:
-            print("[Scheduler] [FAIL] Phase 1 INFEASIBLE")
+        print(f"[Scheduler] 솔버 실행 (제한: {self.cfg.time_limit_seconds}초)...")
+        status = solver.solve(self.model)
+
+        if status == cp_model.INFEASIBLE:
+            print("[Scheduler] [FAIL] INFEASIBLE")
             return None
 
-        if status1 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            print(f"[Scheduler] [Phase 1] 초기해 확보 "
-                  f"(objective={p1.objective_value:.1f}) → hint 주입")
-            for n in self.nurses:
-                for d in self.days:
-                    for s in ALL_SHIFTS:
-                        self.model.add_hint(
-                            self.sv[n.id][d][s],
-                            p1.value(self.sv[n.id][d][s])
-                        )
-        else:
-            print("[Scheduler] [Phase 1] 초기해 없음 → hint 없이 Phase 2 진행")
-
-        # ── Phase 2: hint 기반 최적화 ─────────────────────────────────────────
-        print(f"[Scheduler] [Phase 2] 최적화 (최대 {self.cfg.time_limit_seconds}초)...")
-        p2 = cp_model.CpSolver()
-        p2.parameters.max_time_in_seconds = self.cfg.time_limit_seconds
-        p2.parameters.num_workers = 8
-        p2.parameters.log_search_progress = True
-        status2 = p2.solve(self.model)
-
-        if status2 == cp_model.INFEASIBLE:
-            print("[Scheduler] [FAIL] Phase 2 INFEASIBLE")
-            return None
-
-        if status2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             print(f"[Scheduler] [OK] 완료 "
-                  f"(status={p2.status_name(status2)}, "
-                  f"objective={p2.objective_value:.1f})")
-            return self._extract_result(p2)
+                  f"(status={solver.status_name(status)}, "
+                  f"objective={solver.objective_value:.1f})")
+            return self._extract_result(solver)
 
         # UNKNOWN = 시간초과. 해가 하나라도 있으면 반환.
         try:
-            obj = p2.objective_value
+            obj = solver.objective_value
             print(f"[Scheduler] [WARN] 시간초과 - 최선의 해 반환 (objective={obj:.1f})")
-            return self._extract_result(p2)
+            return self._extract_result(solver)
         except Exception:
             print(f"[Scheduler] [FAIL] 시간초과 - 해 없음")
             return None
