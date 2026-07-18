@@ -23,7 +23,7 @@ const DEFAULT_CONFIG: ConstraintConfig = {
   max_n6_block: 2,
   night_min_gap: 10,
   night_max_count: 7,
-  time_limit_seconds: 360,
+  time_limit_seconds: 90,
 }
 
 const GROUPS: GroupType[] = ['charge', 'leader', 'mid', 'junior', 'first']
@@ -178,6 +178,12 @@ export default function Dashboard() {
                     )}
                     {n.is_part_time && (
                       <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: '#92400e', color: '#fff', fontWeight: 600 }}>주2일</span>
+                    )}
+                    {n.is_preceptee && n.preceptor_subgroup && (
+                      <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: '#db2777', color: '#fff', fontWeight: 600 }}>프리셉티{n.preceptor_subgroup}</span>
+                    )}
+                    {!n.is_preceptee && n.preceptor_subgroup && (
+                      <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: '#9333ea', color: '#fff', fontWeight: 600 }}>프리셉터{n.preceptor_subgroup}</span>
                     )}
                     <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>{GROUP_LABEL[n.group].slice(0,2)}</span>
                     <button onClick={() => setNurses(nurses.filter(x => x.id !== n.id))}
@@ -378,6 +384,12 @@ function NurseAddRow({ onAdd, nextId }: { onAdd: (n: Nurse) => void; nextId: num
       is_part_time: pt,
       fixed_requests: {},
       preferred_requests: [],
+      preceptor_subgroup: null,
+      is_preceptee: false,
+      preceptor_support_days: 0,
+      career_years: null,
+      sabun: '',
+      note: '',
     })
     setName(''); setNd(false); setTs(false); setPt(false)
   }

@@ -101,10 +101,6 @@ class DiagnosticScheduler(NurseScheduler):
         if not (skip_min and skip_max):
             self._c_min_max_staff_diagnostic(skip_min=skip_min, skip_max=skip_max)
 
-        try:
-            self._c_first_year_limit()
-        except AssertionError:
-            pass
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = time_limit

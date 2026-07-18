@@ -63,6 +63,12 @@ class NurseIn(BaseModel):
     is_part_time: bool = False
     fixed_requests: dict[str, str] = {}      # {"1": "EDU", ...}
     preferred_requests: list[dict] = []      # [{"day":3,"shift":"D"}, ...]
+    preceptor_subgroup: str | None = None    # 프리셉터 서브그룹 (A/B/C)
+    is_preceptee: bool = False               # 프리셉티 여부 (staff mix 제외)
+    preceptor_support_days: int = 0          # 월간 프리셉터 지원일 수
+    career_years: int | None = None
+    sabun: str = ""
+    note: str = ""
 
 class ConstraintConfig(BaseModel):
     year: int
@@ -101,6 +107,9 @@ def _to_nurse(ni: NurseIn) -> Nurse:
         is_part_time=ni.is_part_time,
         fixed_requests=fixed,
         preferred_requests=prefs,
+        preceptor_subgroup=ni.preceptor_subgroup,
+        is_preceptee=ni.is_preceptee,
+        preceptor_support_days=ni.preceptor_support_days,
     )
 
 def _make_config(cfg: ConstraintConfig) -> ScheduleConfig:

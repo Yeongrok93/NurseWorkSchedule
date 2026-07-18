@@ -15,6 +15,12 @@ export interface Nurse {
   is_part_time: boolean
   fixed_requests: Record<string, ShiftType>
   preferred_requests: ShiftRequest[]
+  preceptor_subgroup: string | null
+  is_preceptee: boolean
+  preceptor_support_days: number
+  career_years: number | null
+  sabun: string
+  note: string
 }
 
 export interface ConstraintConfig {
