@@ -72,10 +72,12 @@ export default function UploadPanel({ onParsed }: Props) {
           <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
             클릭하거나 파일을 드래그하세요 · .xlsx / .xls
           </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', lineHeight: 1.6,
-            background: 'var(--color-background-secondary)', borderRadius: 6, padding: '6px 10px', display: 'inline-block', textAlign: 'left' }}>
-            컬럼: <code>이름 · 그룹 · 나이트전담(선택) · 1일 · 2일 · ...</code><br/>
-            그룹: 리더 / 중간연차 / 저연차 / 1년차 &nbsp;|&nbsp; 희망: D · E · N · O
+          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', lineHeight: 1.7,
+            background: 'var(--color-background-secondary)', borderRadius: 6, padding: '8px 10px', display: 'inline-block', textAlign: 'left' }}>
+            <b>병동 희망근무 양식 그대로 지원</b> — 조·사번·성명 + 일자별 희망<br/>
+            그룹(CN·duty CN·야간전담·프리셉터·CN2·CN1)과 연차는 자동 인식<br/>
+            희망 표기: <code>D^ E^ N^ OF^</code> · 교예/보예는 교육(고정)으로 처리<br/>
+            <span style={{ opacity: 0.75 }}>간단 양식(이름·그룹·1일·2일...)도 지원합니다</span>
           </div>
         </>
       )}

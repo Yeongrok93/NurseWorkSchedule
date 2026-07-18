@@ -58,6 +58,7 @@ export interface NurseStats {
 export interface ScheduleResult {
   schedule: Record<string, Record<string, ShiftType>>
   stats: Record<string, NurseStats>
+  support_days?: Record<string, number[]>   // {프리셉터 서브그룹: [지원일, ...]}
 }
 
 export interface Holiday {

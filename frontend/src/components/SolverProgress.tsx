@@ -17,17 +17,20 @@ const STATUS_META: Record<SolverStatus, { label: string; color: string; bg: stri
 
 export default function SolverProgress({ status, elapsed, timeLimit }: Props) {
   const meta    = STATUS_META[status]
-  const pct     = status === 'running' ? Math.min((elapsed / timeLimit) * 100, 95) : status === 'done' ? 100 : 0
   const running = status === 'running' || status === 'pending'
+  // 백엔드는 feasibility(최대 15초) + 최적화(timeLimit) 순서로 동작
+  const total   = timeLimit + 18
+  const pct     = running ? Math.min((elapsed / total) * 100, 97) : status === 'done' ? 100 : 0
+  const phase   = !running ? '' : elapsed < 3 ? '제약 구성 중...' : elapsed < 18 ? '기본 해 탐색 중...' : '희망·형평성 최적화 중...'
 
   return (
     <div style={{
       background: meta.bg,
       border: `0.5px solid ${meta.color}44`,
       borderRadius: 10,
-      padding: '14px 16px',
+      padding: '12px 14px',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: running ? 10 : 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: running ? 8 : 0 }}>
         {running && (
           <span style={{
             display: 'inline-block', width: 14, height: 14, borderRadius: '50%',
@@ -40,12 +43,22 @@ export default function SolverProgress({ status, elapsed, timeLimit }: Props) {
         <span style={{ fontSize: 13, fontWeight: 600, color: meta.color }}>{meta.label}</span>
         {running && elapsed > 0 && (
           <span style={{ fontSize: 12, color: meta.color, marginLeft: 'auto' }}>
-            {elapsed}s / {timeLimit}s
+            {elapsed}s
+          </span>
+        )}
+        {status === 'done' && elapsed > 0 && (
+          <span style={{ fontSize: 12, color: meta.color, marginLeft: 'auto' }}>
+            {elapsed}초 소요
           </span>
         )}
       </div>
 
-      {/* 프로그레스 바 */}
+      {running && phase && (
+        <div style={{ fontSize: 11, color: meta.color, opacity: 0.85, marginBottom: 6 }}>
+          {phase}
+        </div>
+      )}
+
       {(running || status === 'done') && (
         <div style={{ height: 4, background: `${meta.color}22`, borderRadius: 2, overflow: 'hidden' }}>
           <div style={{
@@ -62,6 +75,11 @@ export default function SolverProgress({ status, elapsed, timeLimit }: Props) {
         <div style={{ fontSize: 12, color: '#991b1b', marginTop: 6, lineHeight: 1.5 }}>
           제약 조건이 너무 강하거나 간호사 수가 부족합니다.<br/>
           최소 인원을 낮추거나 간호사를 추가해보세요.
+        </div>
+      )}
+      {status === 'error' && (
+        <div style={{ fontSize: 12, color: '#991b1b', marginTop: 6, lineHeight: 1.5 }}>
+          백엔드 서버가 실행 중인지 확인해주세요.
         </div>
       )}
 

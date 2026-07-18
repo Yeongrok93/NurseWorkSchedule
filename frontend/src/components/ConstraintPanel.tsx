@@ -52,30 +52,13 @@ export default function ConstraintPanel({ config, onChange }: Props) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-      {/* 기간 */}
-      <div>
-        <div style={sectionTitle}>📅 기간</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <div>
-            <span style={label}>년도</span>
-            <input type="number" style={numInput} value={config.year}
-              onChange={e => onChange({ ...config, year: +e.target.value })} />
-          </div>
-          <div>
-            <span style={label}>월</span>
-            <select style={{ ...numInput, textAlign: 'left' }} value={config.month}
-              onChange={e => onChange({ ...config, month: +e.target.value })}>
-              {Array.from({ length: 12 }, (_, i) => (
-                <option key={i+1} value={i+1}>{i+1}월</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
       {/* 최소 인원 */}
       <div>
         <div style={sectionTitle}>👥 일별 최소 인원</div>
+        <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.5 }}>
+          생성된 표는 이 인원을 보장합니다 (불가능한 경우에만 자동 완화).<br/>
+          기간(년/월)은 상단 헤더에서 변경하세요.
+        </div>
         {DAY_TYPES.map(({ key, label: lbl }) => (
           <div key={key} style={{ marginBottom: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6,
