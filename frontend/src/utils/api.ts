@@ -1,7 +1,12 @@
 import type { ConstraintConfig, Nurse, ScheduleResult, Holiday } from '../types'
 
-const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
-const WS_BASE = BASE.replace(/^http/, 'ws')
+// 개발: VITE_API_URL(.env.local) 사용 / 배포·exe 빌드: 같은 서버에서 서빙되므로 상대 경로
+const BASE = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_URL ?? 'http://localhost:8002')
+  : ''
+const WS_BASE = BASE
+  ? BASE.replace(/^http/, 'ws')
+  : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
 
 export async function parseExcel(file: File): Promise<{ nurses: Nurse[]; count: number }> {
   const fd = new FormData()

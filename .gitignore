@@ -38,3 +38,10 @@ Thumbs.db
 
 # Excel output (generated files)
 schedule_*.xlsx
+
+# PyInstaller / 설치파일 빌드 산출물
+backend/build/
+backend/dist/
+backend/installer/
+backend/*.spec
+frontend/tsconfig.tsbuildinfo

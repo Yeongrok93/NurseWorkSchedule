@@ -10,6 +10,8 @@ import asyncio
 import io
 import json
 import logging
+import os
+import sys
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
@@ -18,6 +20,7 @@ import holidays
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from excel_parser import parse_nurse_excel
@@ -254,6 +257,27 @@ async def export_schedule(job_id: str, req: ScheduleRequest):
 
 # ─── WebSocket (솔버 진행상황 실시간 스트리밍) ───────────────────────────────
 
+# ─── 프론트엔드 정적 파일 서빙 (exe/단일 서버 배포용) ─────────────────────────
+# frontend/dist 가 있으면 루트에서 서빙. PyInstaller 빌드 시 sys._MEIPASS 참조.
+
+def _frontend_dist() -> str | None:
+    base = getattr(sys, "_MEIPASS", None)
+    candidates = (
+        [os.path.join(base, "frontend_dist")] if base else []
+    ) + [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend", "dist"),
+    ]
+    for p in candidates:
+        if os.path.isfile(os.path.join(p, "index.html")):
+            return os.path.abspath(p)
+    return None
+
+
+_dist = _frontend_dist()
+if _dist:
+    logger.info(f"프론트엔드 서빙: {_dist}")
+
+
 @app.websocket("/ws/{job_id}")
 async def ws_progress(websocket: WebSocket, job_id: str):
     await websocket.accept()
@@ -277,3 +301,8 @@ async def ws_progress(websocket: WebSocket, job_id: str):
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         pass
+
+
+# 정적 마운트는 모든 API 라우트 등록 이후에 해야 라우팅이 우선한다
+if _dist:
+    app.mount("/", StaticFiles(directory=_dist, html=True), name="frontend")
