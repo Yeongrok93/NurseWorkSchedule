@@ -88,6 +88,15 @@ export default function ResultSummary({ result, nurses, config, holidays, elapse
 
   return (
     <div style={{ marginBottom: 14 }}>
+      {result.relaxed && (
+        <div style={{
+          marginBottom: 10, padding: '9px 14px', borderRadius: 8, fontSize: 12,
+          background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e',
+        }}>
+          ⚠ 원래 조건으로는 표를 만들 수 없어 <b>{result.relaxed}</b> 후 생성했습니다.
+          아래 지표를 특히 꼼꼼히 확인해주세요.
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'stretch' }}>
         {/* 희망 반영률 */}
         <div style={{ ...card, cursor: deniedList.length ? 'pointer' : 'default' }}

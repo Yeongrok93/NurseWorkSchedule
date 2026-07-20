@@ -4,6 +4,7 @@ export type GroupType = 'charge' | 'leader' | 'mid' | 'junior' | 'first'
 export interface ShiftRequest {
   day: number
   shift: ShiftType
+  rank?: number          // 특기사항에서 추출한 희망 순위 (1이 가장 강함)
 }
 
 export interface Nurse {
@@ -18,9 +19,29 @@ export interface Nurse {
   preceptor_subgroup: string | null
   is_preceptee: boolean
   preceptor_support_days: number
+  no_night: boolean                // 야간 근무 불가 ('N 불가')
+  independence_day: number | null  // 신입 독립 시작일
+  weekly_fixed_off: number[]       // 주차요일제 (0=월 … 6=일)
   career_years: number | null
   sabun: string
+  work_kind: string                // 근무종류 원문 (3교대/야간전담/…)
   note: string
+}
+
+/** 특기사항 자연어 해석 결과 (사용자 확인 대상) */
+export interface NoteInterpretation {
+  index: number
+  name: string
+  note: string
+  priority_requests: { rank: number; days: number[] }[]
+  weekly_fixed_off: string[]       // ["수","목"]
+  leftover: string                 // 해석 못한 나머지
+}
+
+export interface NoteInterpretResult {
+  items: NoteInterpretation[]
+  engine: 'llm' | 'rule' | 'none'
+  warning: string | null
 }
 
 export interface ConstraintConfig {
@@ -59,6 +80,7 @@ export interface ScheduleResult {
   schedule: Record<string, Record<string, ShiftType>>
   stats: Record<string, NurseStats>
   support_days?: Record<string, number[]>   // {프리셉터 서브그룹: [지원일, ...]}
+  relaxed?: string                          // 제약이 완화된 경우 그 내용
 }
 
 export interface Holiday {

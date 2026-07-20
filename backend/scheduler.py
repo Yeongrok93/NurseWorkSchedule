@@ -61,6 +61,7 @@ class Group(str, Enum):
 class ShiftRequest:
     day: int
     shift: Shift
+    rank: int = 1        # 희망 순위 (1순위가 가장 강함). 미지정 = 1
 
 
 @dataclass
@@ -79,6 +80,10 @@ class Nurse:
     preceptor_subgroup: Optional[str] = None   # 서브그룹 (A/B/C 등)
     is_preceptee: bool = False                 # True면 staff mix 인원에서 제외
     preceptor_support_days: int = 0            # 월간 프리셉터 지원일 수
+    # 개별 근무 조건
+    no_night: bool = False                     # 야간 근무 불가 (예: 'N 불가')
+    independence_day: Optional[int] = None     # 신입 독립 시작일 (이후 동료와 근무 중복 금지)
+    weekly_fixed_off: list[int] = field(default_factory=list)  # 주차요일제: 0=월 … 6=일
 
 
 @dataclass
@@ -113,7 +118,9 @@ class ScheduleConfig:
     # Soft 가중치
     w_request_fulfilled: int = 25   # 희망근무 (올림: 반영률 개선)
     w_request_off: int       = 50   # 오프(O) 희망 — 실무상 가장 중요해 가중치 상향
-    w_night_fairness: int    = 20   # 나이트 균등 (올림: 핵심 형평성)
+    w_night_fairness: int    = 45   # 나이트 균등 (상향: 5월 결과 편차 4 → 축소 목표)
+    # 희망 순위별 배수 (특기사항에서 추출한 1/2/3순위). 0 = 순위 없음(기본)
+    rank_multiplier: dict = field(default_factory=lambda: {0: 1.0, 1: 4.0, 2: 2.5, 3: 1.5})
     w_staffmix: int          = 12   # Staff-mix 비율
     w_noe_pattern: int       = 5    # N→O→E 패턴
     w_non_pattern: int       = 7    # N→O→N 패턴
@@ -228,6 +235,9 @@ class NurseScheduler:
             elif n.is_part_time:
                 # 주2일제: 낮/저녁/교육만 (야간 금지)
                 self._shifts_for[n.id] = [Shift.D, Shift.E, Shift.EDU, Shift.O]
+            elif n.no_night:
+                # 'N 불가' 개별 조건
+                self._shifts_for[n.id] = [Shift.D, Shift.E, Shift.EDU, Shift.O]
             else:
                 self._shifts_for[n.id] = WORK_3 + EDU_SHIFTS + [Shift.O]
 
@@ -309,16 +319,15 @@ class NurseScheduler:
           2. 같은 날 같은 shift(D or E)에 2명 동시 배정 금지
         """
         charges = [n for n in self.nurses if n.group == Group.CHARGE]
-        if len(charges) == 0:
+        if len(charges) < 2:
             return
-        assert len(charges) == 2, (
-            f"차지그룹은 정확히 2명이어야 합니다 (현재: {len(charges)}명)"
-        )
-        c1, c2 = charges
+        if len(charges) != 2:
+            print(f"[Scheduler] [WARN] 차지 {len(charges)}명 (통상 2명) — "
+                  f"같은 shift 중복 금지만 적용합니다")
         for d in self.days:
             for s in [Shift.D, Shift.E]:
                 self.model.add(
-                    self.sv[c1.id][d][s] + self.sv[c2.id][d][s] <= 1
+                    sum(self.sv[c.id][d][s] for c in charges) <= 1
                 )
 
     # ── Hard: 6D/6N 쌍 제약 ──────────────────────────────────────────────────
@@ -648,6 +657,66 @@ class NurseScheduler:
             night_total = sum(self.sv[n.id][d][Shift.N] for d in self.days)
             self.model.add(night_total >= 2)
 
+    # ── Hard: 1년차 shift당 최대 3명 ────────────────────────────────────────
+    #    (수간호사 요청: 신입이 한 근무조에 몰리면 안전 문제)
+
+    def _c_first_year_limit(self):
+        first_nurses = [n for n in self.nurses
+                        if n.group == Group.FIRST and not n.is_preceptee]
+        if len(first_nurses) <= 3:
+            return
+        for d in self.days:
+            for s in WORK_3:
+                self.model.add(
+                    sum(self.sv[n.id][d][s] for n in first_nurses) <= 3
+                )
+
+    # ── Hard: 나이트 4연속 금지 (N + 6N 합산) ───────────────────────────────
+
+    def _c_no_4_consecutive_nights(self):
+        for n in self.nurses:
+            for d in self.days:
+                window = [d, d + 1, d + 2, d + 3]
+                if not all(w in self.days for w in window):
+                    continue
+                self.model.add(
+                    sum(self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
+                        for w in window) <= 3
+                )
+
+    # ── Hard: 주차요일제 (매주 지정 요일 고정 오프) ─────────────────────────
+
+    def _c_weekly_fixed_off(self):
+        for n in self.nurses:
+            if not n.weekly_fixed_off:
+                continue
+            for d in self.days:
+                wd = calendar.weekday(self.cfg.year, self.cfg.month, d)
+                if wd in n.weekly_fixed_off:
+                    # 고정 리퀘스트(교육 등)가 이미 있으면 그쪽을 우선
+                    if d in n.fixed_requests:
+                        continue
+                    self.model.add(self.sv[n.id][d][Shift.O] == 1)
+
+    # ── Hard: 신입 독립 후 동료 신입과 근무 중복 금지 ───────────────────────
+    #    "8/21부터는 신입간호사 근무가 겹치지 않게 작성 필요"
+
+    def _c_new_grad_no_overlap(self):
+        cohorts: dict[int, list[Nurse]] = {}
+        for n in self.nurses:
+            if n.independence_day:
+                cohorts.setdefault(n.independence_day, []).append(n)
+        for start_day, members in cohorts.items():
+            if len(members) < 2:
+                continue
+            for d in self.days:
+                if d < start_day:
+                    continue
+                for s in WORK_3:
+                    self.model.add(
+                        sum(self.sv[n.id][d][s] for n in members) <= 1
+                    )
+
     # ── Hard: 최소 근무시간 (remain >= -3) ───────────────────────────────────────
 
     def _c_min_work_hours_per_nurse(self):
@@ -669,14 +738,15 @@ class NurseScheduler:
         rewards   = []
         cfg       = self.cfg
 
-        # ① 희망 근무 보상 (오프 희망은 가중치 상향)
+        # ① 희망 근무 보상 (오프 희망 상향 + 특기사항 순위별 배수)
         for n in self.nurses:
             for req in n.preferred_requests:
                 if req.day not in self.days:
                     continue
                 if req.shift in self._shifts_for[n.id]:
-                    w = cfg.w_request_off if req.shift == Shift.O else cfg.w_request_fulfilled
-                    rewards.append(w * self.sv[n.id][req.day][req.shift])
+                    base = cfg.w_request_off if req.shift == Shift.O else cfg.w_request_fulfilled
+                    mult = cfg.rank_multiplier.get(getattr(req, "rank", 0) or 0, 1.0)
+                    rewards.append(int(base * mult) * self.sv[n.id][req.day][req.shift])
 
         # ① -b 2교대 간호사 D/E/N 사용 패널티 (6D/6N 선호, 3교대 혼용 허용)
         for n in self.nurses:
@@ -835,20 +905,20 @@ class NurseScheduler:
                 self.model.add_abs_equality(abs_d, diff)
                 penalties.append(cfg.w_shift_dist * abs_d)
 
-        # ⑨ 4연속 나이트 억제 (N+6N 합산, 전체 간호사)
-        # over3 = max(0, sum(N+6N in window) - 3) → 초과량만큼 패널티
-        for n in self.nurses:
-            for d in self.days:
-                window = [d, d+1, d+2, d+3]
-                if not all(w in self.days for w in window):
-                    continue
-                total_n = sum(
-                    self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
-                    for w in window
-                )
-                over3 = self.model.new_int_var(0, 4, f"n4_{n.id}_{d}")
-                self.model.add(over3 >= total_n - 3)
-                penalties.append(cfg.w_consec_night4 * over3)
+        # ⑨ 4연속 나이트 억제 — hard 승격 시에는 중복이라 생략
+        if not getattr(self, "_hard_extras", True):
+            for n in self.nurses:
+                for d in self.days:
+                    window = [d, d+1, d+2, d+3]
+                    if not all(w in self.days for w in window):
+                        continue
+                    total_n = sum(
+                        self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
+                        for w in window
+                    )
+                    over3 = self.model.new_int_var(0, 4, f"n4_{n.id}_{d}")
+                    self.model.add(over3 >= total_n - 3)
+                    penalties.append(cfg.w_consec_night4 * over3)
 
         # ⑪ 일별 최소인원 미달 패널티 (D/E/N 공통, 프리셉티 제외)
         countable_for_staff = [n for n in self.nurses if not n.is_preceptee]
@@ -965,10 +1035,10 @@ class NurseScheduler:
                         ).only_enforce_if(sup_here)
                         penalties.append(cfg.w_staff_short * 2 * short)
 
-        # ⑭ 1년차 미만(FIRST) 한 shift에 3명 초과 강력 억제
+        # ⑭ 1년차 shift당 3명 초과 억제 — hard 승격 시에는 중복이라 생략
         first_nurses = [n for n in self.nurses
                         if n.group == Group.FIRST and not n.is_preceptee]
-        if first_nurses:
+        if first_nurses and not getattr(self, "_hard_extras", True):
             for d in self.days:
                 for s in WORK_3:
                     first_cnt = sum(self.sv[n.id][d][s] for n in first_nurses)
@@ -981,7 +1051,8 @@ class NurseScheduler:
 
     # ── 메인 ─────────────────────────────────────────────────────────────────
 
-    def _register_hard_constraints(self, hard_min_staff: bool = True):
+    def _register_hard_constraints(self, hard_min_staff: bool = True,
+                                   hard_extras: bool = True):
         print("[Scheduler] Hard 제약 등록 중...")
         self._c_exactly_one_shift_per_day()
         self._c_fixed_requests()
@@ -1001,18 +1072,37 @@ class NurseScheduler:
         self._c_preceptor_support()
         self._c_max_night_per_nurse()
         self._c_min_night_per_nurse()
+        # 개별 근무 조건 (항상 hard — 본인 사정이라 타협 대상 아님)
+        self._c_weekly_fixed_off()
+        self._c_new_grad_no_overlap()
+        # 안전 규칙 (완화 사다리 2단계에서 soft로 강등)
+        if hard_extras:
+            self._c_first_year_limit()
+            self._c_no_4_consecutive_nights()
+
+    # 완화 사다리: 위에서부터 시도하고, 해가 없으면 한 단계씩 풀어준다
+    _RELAX_LADDER = [
+        (True,  True,  "전체 제약"),
+        (True,  False, "안전규칙(1년차·나이트4연속)을 soft로 완화"),
+        (False, False, "최소인원까지 soft로 완화"),
+    ]
 
     def solve(self) -> Optional[dict]:
-        """1차: 최소인원 hard로 시도.
-        하드 제약 충돌(INFEASIBLE) 시에만 최소인원을 soft로 완화해 재시도."""
-        result = self._solve_attempt(hard_min_staff=True)
-        if result is not None or self._last_status != cp_model.INFEASIBLE:
-            return result
-        print("[Scheduler] [RELAX] 최소인원 hard 불가 → soft로 완화 후 재시도...")
-        fresh = NurseScheduler(self.nurses, self.cfg)
-        return fresh._solve_attempt(hard_min_staff=False)
+        for i, (hard_min, hard_ex, label) in enumerate(self._RELAX_LADDER):
+            if i > 0:
+                print(f"[Scheduler] [RELAX] {i}단계 실패 → {label} 후 재시도...")
+            sched = self if i == 0 else NurseScheduler(self.nurses, self.cfg)
+            result = sched._solve_attempt(hard_min_staff=hard_min,
+                                          hard_extras=hard_ex)
+            if result is not None:
+                if i > 0:
+                    result["relaxed"] = label
+                return result
+        return None
 
-    def _solve_attempt(self, hard_min_staff: bool) -> Optional[dict]:
+    def _solve_attempt(self, hard_min_staff: bool,
+                       hard_extras: bool = True) -> Optional[dict]:
+        self._hard_extras = hard_extras
         print(f"[Scheduler] {self.cfg.year}년 {self.cfg.month}월 "
               f"/ 간호사 {len(self.nurses)}명 / {self.num_days}일")
         print(f"[Scheduler] 월 목표 근무시간: {self.target_h}h "
@@ -1020,7 +1110,8 @@ class NurseScheduler:
         self._last_status = cp_model.UNKNOWN
 
         self._build_variables()
-        self._register_hard_constraints(hard_min_staff=hard_min_staff)
+        self._register_hard_constraints(hard_min_staff=hard_min_staff,
+                                        hard_extras=hard_extras)
 
         # Phase 1: feasibility 확보 (목적함수 없이 — 정상 데이터면 수 초 내 완료)
         print("[Scheduler] Phase 1: feasibility 확보 중...")

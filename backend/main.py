@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from excel_parser import parse_nurse_excel
 from excel_export import build_excel
+from note_parser import interpret_notes, apply_interpretation
 from infeasibility_analyzer import analyze as analyze_infeasibility
 from scheduler import (
     Group, Nurse, NurseScheduler, ScheduleConfig, Shift, ShiftRequest,
@@ -69,8 +70,12 @@ class NurseIn(BaseModel):
     preceptor_subgroup: str | None = None    # 프리셉터 서브그룹 (A/B/C)
     is_preceptee: bool = False               # 프리셉티 여부 (staff mix 제외)
     preceptor_support_days: int = 0          # 월간 프리셉터 지원일 수
+    no_night: bool = False                   # 야간 근무 불가 ('N 불가')
+    independence_day: int | None = None      # 신입 독립 시작일
+    weekly_fixed_off: list[int] = []         # 주차요일제 (0=월 … 6=일)
     career_years: int | None = None
     sabun: str = ""
+    work_kind: str = ""
     note: str = ""
 
 class ConstraintConfig(BaseModel):
@@ -101,7 +106,8 @@ class ScheduleRequest(BaseModel):
 def _to_nurse(ni: NurseIn) -> Nurse:
     grp = Group(ni.group)
     fixed = {int(d): Shift(s) for d, s in ni.fixed_requests.items()}
-    prefs = [ShiftRequest(day=r["day"], shift=Shift(r["shift"]))
+    prefs = [ShiftRequest(day=r["day"], shift=Shift(r["shift"]),
+                          rank=int(r.get("rank", 0) or 0))
              for r in ni.preferred_requests]
     return Nurse(
         id=ni.id, name=ni.name, group=grp,
@@ -113,6 +119,9 @@ def _to_nurse(ni: NurseIn) -> Nurse:
         preceptor_subgroup=ni.preceptor_subgroup,
         is_preceptee=ni.is_preceptee,
         preceptor_support_days=ni.preceptor_support_days,
+        no_night=ni.no_night,
+        independence_day=ni.independence_day,
+        weekly_fixed_off=list(ni.weekly_fixed_off or []),
     )
 
 def _make_config(cfg: ConstraintConfig) -> ScheduleConfig:
@@ -170,6 +179,38 @@ async def parse_excel(file: UploadFile = File(...)):
         return {"nurses": nurses, "count": len(nurses)}
     except Exception as e:
         raise HTTPException(422, f"파싱 오류: {e}")
+
+
+class InterpretRequest(BaseModel):
+    nurses: list[NurseIn]
+    year: int
+    month: int
+    api_key: str | None = None      # 없으면 규칙 기반으로만 해석
+
+
+class ApplyRequest(BaseModel):
+    nurses: list[NurseIn]
+    items: list[dict]
+
+
+@app.post("/notes/interpret")
+async def interpret_notes_endpoint(req: InterpretRequest):
+    """특기사항(자연어) → 구조화 제약 '후보'. 적용은 하지 않는다."""
+    nurses = [n.model_dump() for n in req.nurses]
+    num_days = days_in_month(req.year, req.month)
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: interpret_notes(nurses, req.month, num_days, req.api_key),
+    )
+    return result
+
+
+@app.post("/notes/apply")
+def apply_notes_endpoint(req: ApplyRequest):
+    """사용자가 확인한 해석 결과를 간호사 목록에 반영해 돌려준다."""
+    nurses = [n.model_dump() for n in req.nurses]
+    return {"nurses": apply_interpretation(nurses, req.items)}
 
 
 @app.post("/schedule/start")

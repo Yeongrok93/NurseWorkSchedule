@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Nurse, ConstraintConfig, ScheduleResult, Holiday, SolverStatus, GroupType, ShiftType } from '../types'
+import type {
+  Nurse, ConstraintConfig, ScheduleResult, Holiday, SolverStatus, GroupType, ShiftType,
+  NoteInterpretResult, NoteInterpretation,
+} from '../types'
 import { GROUP_LABEL, GROUP_COLOR, SHIFT_COLOR } from '../types'
-import { startSchedule, connectJobWS, downloadExcel, getHolidays, analyzeInfeasibility } from '../utils/api'
+import {
+  startSchedule, connectJobWS, downloadExcel, getHolidays, analyzeInfeasibility,
+  interpretNotes, applyNotes,
+} from '../utils/api'
 import UploadPanel from '../components/UploadPanel'
 import ConstraintPanel from '../components/ConstraintPanel'
 import SolverProgress from '../components/SolverProgress'
 import ScheduleTable from '../components/ScheduleTable'
 import ResultSummary from '../components/ResultSummary'
+import NoteReviewPanel from '../components/NoteReviewPanel'
 
 const DEFAULT_CONFIG: ConstraintConfig = {
   year: new Date().getFullYear(),
@@ -66,6 +73,10 @@ export default function Dashboard() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis,  setAnalysis]  = useState<any>(null)
   const [toasts,   setToasts]   = useState<Toast[]>([])
+  // 특기사항 해석
+  const [noteResult, setNoteResult] = useState<NoteInterpretResult | null>(null)
+  const [noteBusy,   setNoteBusy]   = useState(false)
+  const [apiKey,     setApiKey]     = useState<string>(() => loadLS('duty.apiKey', ''))
 
   const wsRef    = useRef<WebSocket | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -145,10 +156,45 @@ export default function Dashboard() {
       .catch(() => toast('다운로드 실패 — 작업이 만료되었으면 다시 생성해주세요', 'err'))
   }
 
+  async function handleInterpretNotes() {
+    setNoteBusy(true)
+    try {
+      const r = await interpretNotes(nurses, config.year, config.month, apiKey || undefined)
+      if (r.items.length === 0) {
+        toast('해석할 특기사항이 없습니다', 'info')
+      } else {
+        setNoteResult(r)
+        if (r.warning) toast(r.warning, 'err')
+      }
+    } catch {
+      toast('특기사항 해석 실패 — 백엔드 연결을 확인하세요', 'err')
+    } finally {
+      setNoteBusy(false)
+    }
+  }
+
+  async function handleApplyNotes(items: NoteInterpretation[]) {
+    setNoteBusy(true)
+    try {
+      const updated = await applyNotes(nurses, items)
+      setNurses(updated)
+      setNoteResult(null)
+      const ranked = updated.reduce(
+        (s, n) => s + n.preferred_requests.filter(r => r.rank).length, 0)
+      const weekly = updated.filter(n => (n.weekly_fixed_off ?? []).length > 0).length
+      toast(`반영 완료 — 순위 ${ranked}건${weekly ? `, 주차요일제 ${weekly}명` : ''}`, 'ok')
+    } catch {
+      toast('반영 실패', 'err')
+    } finally {
+      setNoteBusy(false)
+    }
+  }
+
   function handleReset() {
     if (!confirm('명단·설정·결과를 모두 지우고 처음부터 시작할까요?')) return
     setNurses([]); setConfig(DEFAULT_CONFIG); setResult(null); setJobId(null)
     setStatus('idle'); setElapsed(0); setAnalysis(null); setFilterGrp(''); setSearchName('')
+    setNoteResult(null)
     setActiveTab('upload')
     ;['duty.nurses','duty.config','duty.result','duty.jobId','duty.elapsed'].forEach(k => localStorage.removeItem(k))
     toast('초기화 완료', 'ok')
@@ -163,6 +209,9 @@ export default function Dashboard() {
     {} as Record<GroupType, number>
   )
   const totalReqs = nurses.reduce((s, n) => s + n.preferred_requests.length, 0)
+  const rankedReqs = nurses.reduce(
+    (s, n) => s + n.preferred_requests.filter(r => r.rank).length, 0)
+  const noteCount = nurses.filter(n => (n.note ?? '').trim()).length
   const running = status === 'running' || status === 'pending'
 
   const TABS = [
@@ -296,6 +345,48 @@ export default function Dashboard() {
                   </div>
                 )}
 
+                {/* 특기사항 해석 진입점 */}
+                {noteCount > 0 && (
+                  <div style={{
+                    marginBottom: 10, padding: '9px 11px', borderRadius: 8,
+                    background: rankedReqs > 0 ? '#f0fdf4' : '#eef2ff',
+                    border: `1px solid ${rankedReqs > 0 ? '#bbf7d0' : '#c7d2fe'}`,
+                  }}>
+                    <div style={{
+                      fontSize: 11, fontWeight: 700, marginBottom: 5,
+                      color: rankedReqs > 0 ? '#166534' : '#3730a3',
+                    }}>
+                      {rankedReqs > 0
+                        ? `✓ 특기사항 반영됨 — 순위 ${rankedReqs}건`
+                        : `📝 특기사항 ${noteCount}건 (1순위·주차요일제 등)`}
+                    </div>
+                    <button onClick={handleInterpretNotes} disabled={noteBusy} style={{
+                      width: '100%', padding: '7px', borderRadius: 6, border: 'none',
+                      fontSize: 12, fontWeight: 600, color: '#fff',
+                      background: noteBusy ? '#94a3b8' : '#4f46e5',
+                      cursor: noteBusy ? 'not-allowed' : 'pointer',
+                    }}>
+                      {noteBusy ? '해석 중...' : rankedReqs > 0 ? '다시 해석' : '특기사항 해석하기'}
+                    </button>
+                    <details style={{ marginTop: 6 }}>
+                      <summary style={{ fontSize: 10, color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+                        AI 해석 사용 (선택)
+                      </summary>
+                      <input type="password" value={apiKey} placeholder="Anthropic API 키 (없으면 규칙 기반)"
+                        onChange={e => { setApiKey(e.target.value); saveLS('duty.apiKey', e.target.value) }}
+                        style={{
+                          width: '100%', marginTop: 5, padding: '5px 7px', borderRadius: 5, fontSize: 11,
+                          border: '0.5px solid var(--color-border-secondary)',
+                          background: 'var(--color-background-primary)',
+                          color: 'var(--color-text-primary)',
+                        }} />
+                      <div style={{ fontSize: 10, color: 'var(--color-text-secondary)', marginTop: 4, lineHeight: 1.5 }}>
+                        키를 넣으면 오타·특이 표기까지 해석합니다. 비워두면 규칙 기반으로 동작합니다.
+                      </div>
+                    </details>
+                  </div>
+                )}
+
                 <NurseAddRow onAdd={n => setNurses([...nurses, n])} nextId={Math.max(0, ...nurses.map(n => n.id)) + 1} />
 
                 <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -354,6 +445,16 @@ export default function Dashboard() {
 
         {/* ══ 메인 영역 ══ */}
         <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
+
+          {noteResult && (
+            <NoteReviewPanel
+              result={noteResult}
+              month={config.month}
+              applying={noteBusy}
+              onApply={handleApplyNotes}
+              onCancel={() => setNoteResult(null)}
+            />
+          )}
 
           {analysis && (
             <div style={{
@@ -628,11 +729,17 @@ function NurseRow({ nurse: n, onUpdate, onDelete }: {
                 }}>{d}일 {s}</span>
               ))}
               {[...n.preferred_requests].sort((a, b) => a.day - b.day).map((r, i) => (
-                <span key={i} style={{
+                <span key={i} title={r.rank ? `${r.rank}순위` : undefined} style={{
                   fontSize: 10, padding: '1px 5px', borderRadius: 4, fontWeight: 600,
                   background: SHIFT_COLOR[r.shift]?.bg === 'transparent' ? '#f1f5f9' : SHIFT_COLOR[r.shift]?.bg,
                   color: SHIFT_COLOR[r.shift]?.text,
-                }}>{r.day}일 {r.shift === 'O' ? '오프' : r.shift}</span>
+                  outline: r.rank === 1 ? '1.5px solid #dc2626'
+                         : r.rank === 2 ? '1.5px solid #ea580c'
+                         : r.rank === 3 ? '1.5px solid #ca8a04' : undefined,
+                }}>
+                  {r.day}일 {r.shift === 'O' ? '오프' : r.shift}
+                  {r.rank ? <sup style={{ fontSize: 8 }}>{r.rank}</sup> : null}
+                </span>
               ))}
             </div>
           ) : (
@@ -666,8 +773,12 @@ function NurseAddRow({ onAdd, nextId }: { onAdd: (n: Nurse) => void; nextId: num
       preceptor_subgroup: null,
       is_preceptee: false,
       preceptor_support_days: 0,
+      no_night: false,
+      independence_day: null,
+      weekly_fixed_off: [],
       career_years: null,
       sabun: '',
+      work_kind: '',
       note: '',
     })
     setName(''); setNd(false); setTs(false); setPt(false)

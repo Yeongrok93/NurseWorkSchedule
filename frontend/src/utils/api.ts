@@ -1,4 +1,7 @@
-import type { ConstraintConfig, Nurse, ScheduleResult, Holiday } from '../types'
+import type {
+  ConstraintConfig, Nurse, ScheduleResult, Holiday,
+  NoteInterpretResult, NoteInterpretation,
+} from '../types'
 
 // 개발: VITE_API_URL(.env.local) 사용 / 배포·exe 빌드: 같은 서버에서 서빙되므로 상대 경로
 const BASE = import.meta.env.DEV
@@ -81,6 +84,34 @@ export async function analyzeInfeasibility(
   })
   if (!res.ok) throw new Error('분석 실패')
   return res.json()
+}
+
+export async function interpretNotes(
+  nurses: Nurse[],
+  year: number,
+  month: number,
+  apiKey?: string,
+): Promise<NoteInterpretResult> {
+  const res = await fetch(`${BASE}/notes/interpret`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nurses, year, month, api_key: apiKey || null }),
+  })
+  if (!res.ok) throw new Error('특기사항 해석 실패')
+  return res.json()
+}
+
+export async function applyNotes(
+  nurses: Nurse[],
+  items: NoteInterpretation[],
+): Promise<Nurse[]> {
+  const res = await fetch(`${BASE}/notes/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nurses, items }),
+  })
+  if (!res.ok) throw new Error('적용 실패')
+  return (await res.json()).nurses
 }
 
 export async function getHolidays(year: number, month: number): Promise<Holiday[]> {

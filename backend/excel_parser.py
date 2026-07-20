@@ -37,6 +37,58 @@ _REAL_GROUP_MAP: list[tuple[str, str, str | None]] = [
 
 _KNOWN_PREFIXES = [prefix for prefix, _, _ in _REAL_GROUP_MAP]
 
+# ─── '유형' 컬럼 (2026-08 이후 양식) ────────────────────────────────────────
+# 이 양식에서는 A열이 '조'(팀 문자)이고, 그룹은 D열 '유형' / E열 '근무종류'에 있다.
+#   유형:     CN1 / CN2 / Duty CN / 간호사
+#   근무종류: 3교대 / 야간전담 / 주2일 근무 / N 불가 / 8/21 독립
+# 주의: 이 양식의 CN1·CN2는 '연차'가 아니라 차지간호사 1호·2호를 뜻한다
+#       (5월 양식의 A열 CN1(1년미만)/CN2와 의미가 다름).
+
+def _classify_type_cell(raw: str) -> str:
+    """D열 '유형' 값 → solver group ('' 이면 연차 기반 추정)."""
+    t = raw.strip().lower()
+    if not t:
+        return ""
+    if "1년미만" in t:            # 구양식 표기가 섞여 들어온 경우
+        return "first"
+    if "1년이상" in t:
+        return "junior"
+    if t.startswith("duty cn"):
+        return "leader"
+    if t.startswith("cn"):        # CN / CN1 / CN2 = 차지
+        return "charge"
+    if t.startswith("간호사"):
+        return ""                 # 연차로 추정
+    return ""
+
+
+def _classify_work_kind(raw: str) -> dict:
+    """E열 '근무종류' 값 → 속성 플래그."""
+    k = raw.strip().lower()
+    out = {
+        "is_night_dedicated": False,
+        "is_part_time": False,
+        "no_night": False,
+        "independence_day": None,
+    }
+    if not k:
+        return out
+    if "야간전담" in k or "나이트전담" in k:
+        out["is_night_dedicated"] = True
+    if "주2일" in k or "주 2일" in k:
+        out["is_part_time"] = True
+    if "n 불가" in k or "n불가" in k or "야간불가" in k:
+        out["no_night"] = True
+    # "8/21 독립" → 해당 일자부터 독립 (신입 간호사)
+    m = re.search(r"(\d{1,2})\s*/\s*(\d{1,2}).*독립", k)
+    if m:
+        out["independence_day"] = int(m.group(2))
+    elif "독립" in k:
+        m2 = re.search(r"(\d{1,2})\s*일?\s*독립", k)
+        if m2:
+            out["independence_day"] = int(m2.group(1))
+    return out
+
 # ─── 기존(레거시) 포맷용 그룹 매핑 ────────────────────────────────────────────
 
 _LEGACY_GROUP_MAP = {
@@ -135,6 +187,7 @@ def _parse_real_format(ws, header_row: int) -> list[dict[str, Any]]:
 
     # ── 1) 컬럼 위치 파악 ─────────────────────────────────────────────────
     jo_col = sabun_col = name_col = note_col = None
+    type_col = kind_col = None                       # 유형 / 근무종류 (신양식)
     day_cols: dict[int, int] = {}                    # col_index(0-based) → day
 
     for ci in range(ws.max_column):
@@ -150,6 +203,10 @@ def _parse_real_format(ws, header_row: int) -> list[dict[str, Any]]:
             sabun_col = ci
         elif low == "성명" and name_col is None:
             name_col = ci
+        elif low == "유형" and type_col is None:
+            type_col = ci
+        elif low in ("근무종류", "근무형태") and kind_col is None:
+            kind_col = ci
         elif low in ("특기사항", "비고") and note_col is None:
             note_col = ci
         else:
@@ -249,6 +306,24 @@ def _parse_real_format(ws, header_row: int) -> list[dict[str, Any]]:
         is_nd = flag == "night_dedicated"
         is_preceptor_section = flag == "preceptor"
 
+        # ── 신양식: 유형 / 근무종류 컬럼이 A열 라벨보다 우선 ────────────
+        no_night = False
+        independence_day: int | None = None
+        kind_raw = ""
+        if type_col is not None and type_col < len(row_vals) and row_vals[type_col]:
+            t_grp = _classify_type_cell(str(row_vals[type_col]))
+            if t_grp:
+                group = t_grp
+        if kind_col is not None and kind_col < len(row_vals) and row_vals[kind_col]:
+            kind_raw = str(row_vals[kind_col]).strip()
+            kinds = _classify_work_kind(kind_raw)
+            if kinds["is_night_dedicated"]:
+                is_nd = True
+            no_night = kinds["no_night"]
+            independence_day = kinds["independence_day"]
+            if independence_day is not None:
+                group = "first"          # 독립 예정 = 신입
+
         # 프리셉터 섹션: D열 단일 대문자 → 프리셉티 서브그룹
         preceptor_subgroup: str | None = None
         is_preceptee = False
@@ -265,10 +340,14 @@ def _parse_real_format(ws, header_row: int) -> list[dict[str, Any]]:
                 and nm == pt_marker):
             is_pt = True
             nm = ""                          # 마커이므로 이름으로 쓰지 않음
+        if kind_raw and _classify_work_kind(kind_raw)["is_part_time"]:
+            is_pt = True
 
-        # 이름 결정
-        if nm and nm != "None":
+        # 이름 결정 (성명이 익명화된 일련번호면 사번과 결합)
+        if nm and nm != "None" and not nm.isdigit():
             name = nm
+        elif nm and nm.isdigit():
+            name = f"{sabun}_{nm}"
         elif jo:
             name = f"{jo}_{sabun}"
         else:
@@ -284,17 +363,25 @@ def _parse_real_format(ws, header_row: int) -> list[dict[str, Any]]:
         preferred: list[dict] = []
         fixed: dict[str, str] = {}
 
+        stray_notes: list[str] = []
         for ci, day in day_cols.items():
             if ci >= len(row_vals) or row_vals[ci] is None:
                 continue
-            result = _parse_shift_cell(str(row_vals[ci]))
+            cell_txt = str(row_vals[ci]).strip()
+            result = _parse_shift_cell(cell_txt)
             if result is None:
+                # 근무기호가 아닌 자유 서술 → 특기사항으로 흡수 (LLM 해석 대상)
+                if len(cell_txt) > 3:
+                    stray_notes.append(f"({day}일칸) {cell_txt}")
                 continue
             shift_type, is_fixed = result
             if is_fixed:
                 fixed[str(day)] = shift_type
             else:
                 preferred.append({"day": day, "shift": shift_type})
+
+        if stray_notes:
+            note = " / ".join([note] + stray_notes) if note else " / ".join(stray_notes)
 
         nurses.append({
             "id": len(nurses) + 1,
@@ -303,6 +390,9 @@ def _parse_real_format(ws, header_row: int) -> list[dict[str, Any]]:
             "is_night_dedicated": is_nd,
             "can_two_shift": False,
             "is_part_time": is_pt,
+            "no_night": no_night,
+            "independence_day": independence_day,
+            "weekly_fixed_off": [],
             "preferred_requests": preferred,
             "fixed_requests": fixed,
             "preceptor_subgroup": preceptor_subgroup,
@@ -310,6 +400,7 @@ def _parse_real_format(ws, header_row: int) -> list[dict[str, Any]]:
             "preceptor_support_days": 0,
             "career_years": career,
             "sabun": sabun,
+            "work_kind": kind_raw,
             "note": note,
         })
 
@@ -422,6 +513,9 @@ def _parse_legacy_format(ws, header_row: int) -> list[dict[str, Any]]:
             "is_night_dedicated": is_nd,
             "can_two_shift": can_ts,
             "is_part_time": is_pt,
+            "no_night": False,
+            "independence_day": None,
+            "weekly_fixed_off": [],
             "preferred_requests": preferred,
             "fixed_requests": fixed,
             "preceptor_subgroup": None,
@@ -429,6 +523,7 @@ def _parse_legacy_format(ws, header_row: int) -> list[dict[str, Any]]:
             "preceptor_support_days": 0,
             "career_years": None,
             "sabun": "",
+            "work_kind": "",
             "note": "",
         })
 
