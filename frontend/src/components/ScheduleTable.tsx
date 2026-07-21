@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Nurse, ScheduleResult, ConstraintConfig, ShiftType, Holiday } from '../types'
 import { SHIFT_COLOR, GROUP_COLOR, GROUP_LABEL } from '../types'
+import { color, radius } from '../theme'
 
 interface Props {
   result: ScheduleResult
@@ -24,12 +25,12 @@ function getDayType(year: number, month: number, day: number, holidayDays: Set<n
 
 function thBase(): React.CSSProperties {
   return {
-    background: '#1e293b',
-    color: '#cbd5e1',
-    fontWeight: 600,
-    padding: '5px 3px',
+    background: color.dark,
+    color: '#c4cad4',
+    fontWeight: 700,
+    padding: '6px 3px',
     textAlign: 'center',
-    border: '0.5px solid #334155',
+    border: `0.5px solid #313842`,
     fontSize: 10,
     lineHeight: 1.3,
     whiteSpace: 'nowrap',
@@ -37,12 +38,12 @@ function thBase(): React.CSSProperties {
 }
 
 function getNurseAttr(n: Nurse): { label: string; color: string } {
-  if (n.is_night_dedicated)             return { label: 'N전담',  color: '#7c3aed' }
-  if (n.can_two_shift)                  return { label: '2교대',  color: '#1d4ed8' }
-  if (n.is_part_time)                   return { label: '주2일',  color: '#b45309' }
-  if (n.is_preceptee)                   return { label: `프셉티${n.preceptor_subgroup ?? ''}`, color: '#db2777' }
-  if (n.preceptor_subgroup)             return { label: `프셉터${n.preceptor_subgroup}`, color: '#9333ea' }
-  return { label: '·', color: 'var(--color-text-secondary)' }
+  if (n.is_night_dedicated)             return { label: 'N전담',  color: color.purpleStrong }
+  if (n.can_two_shift)                  return { label: '2교대',  color: color.accentStrong }
+  if (n.is_part_time)                   return { label: '주2일',  color: color.warningStrong }
+  if (n.is_preceptee)                   return { label: `프셉티${n.preceptor_subgroup ?? ''}`, color: '#d6336c' }
+  if (n.preceptor_subgroup)             return { label: `프셉터${n.preceptor_subgroup}`, color: color.purple }
+  return { label: '·', color: color.textTertiary }
 }
 
 export default function ScheduleTable({ result, nurses, config, holidays, filterGroup, searchName }: Props) {
@@ -73,8 +74,9 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
     <div style={{
       overflow: 'auto',
       maxHeight: 'calc(100vh - 250px)',
-      borderRadius: 10,
-      border: '0.5px solid var(--color-border-secondary)',
+      borderRadius: radius.lg,
+      border: `1px solid ${color.border}`,
+      boxShadow: '0 1px 2px rgba(15,23,42,0.04), 0 4px 14px rgba(15,23,42,0.05)',
     }}>
       <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: 11 }}>
         <thead>
@@ -93,12 +95,12 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                     ...thBase(),
                     position: 'sticky', top: 0, zIndex: 3,
                     minWidth: 27,
-                    color: hd ? '#fca5a5' : wk ? '#a5b4fc' : '#cbd5e1',
-                    background: hd ? '#450a0a' : wk ? '#1e3a5f' : '#1e293b',
+                    color: hd ? '#ff8080' : wk ? '#8fb4ff' : '#c4cad4',
+                    background: hd ? '#3d1b1e' : wk ? '#1e2a42' : color.dark,
                   }}>
                   {d}<br/>
                   <span style={{ fontSize: 9, fontWeight: 400 }}>{DOW[dow]}</span>
-                  {hd && <span style={{ fontSize: 8, display: 'block', color: '#fca5a5' }}>공</span>}
+                  {hd && <span style={{ fontSize: 8, display: 'block', color: '#ff8080' }}>공</span>}
                 </th>
               )
             })}
@@ -116,7 +118,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
             const grpClr  = GROUP_COLOR[n.group]
             const attr    = getNurseAttr(n)
             const hovered = hoverRow === n.id
-            const rowBg   = hovered ? '#fefce8' : 'var(--color-background-primary)'
+            const rowBg   = hovered ? color.accentBg : color.bg
             const supSet  = new Set(
               n.preceptor_subgroup ? (supportDays[n.preceptor_subgroup] ?? []) : []
             )
@@ -130,7 +132,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                   position: 'sticky', left: 0, zIndex: 2,
                   padding: '3px 6px', textAlign: 'center', fontSize: 10, fontWeight: 700,
                   borderLeft: `3px solid ${grpClr}`,
-                  borderBottom: '0.5px solid var(--color-border-secondary)',
+                  borderBottom: `0.5px solid ${color.border}`,
                   background: rowBg, color: grpClr,
                   minWidth: W_GRP, width: W_GRP,
                 }}>
@@ -139,9 +141,9 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 {/* 이름 */}
                 <td style={{
                   position: 'sticky', left: W_GRP, zIndex: 2,
-                  padding: '3px 8px', whiteSpace: 'nowrap', fontWeight: 600, fontSize: 12,
-                  borderBottom: '0.5px solid var(--color-border-secondary)',
-                  background: rowBg,
+                  padding: '3px 8px', whiteSpace: 'nowrap', fontWeight: 700, fontSize: 12,
+                  borderBottom: `0.5px solid ${color.border}`,
+                  background: rowBg, color: color.text,
                   minWidth: W_NAME, width: W_NAME, overflow: 'hidden', textOverflow: 'ellipsis',
                 }}>
                   {n.is_night_dedicated ? '★ ' : ''}{n.name}
@@ -150,8 +152,8 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 <td style={{
                   position: 'sticky', left: W_GRP + W_NAME, zIndex: 2,
                   padding: '3px 4px', textAlign: 'center', fontSize: 9,
-                  borderBottom: '0.5px solid var(--color-border-secondary)',
-                  borderRight: '1px solid var(--color-border-secondary)',
+                  borderBottom: `0.5px solid ${color.border}`,
+                  borderRight: `1px solid ${color.border}`,
                   color: attr.color, background: rowBg,
                   minWidth: W_ATTR, width: W_ATTR,
                 }}>
@@ -169,7 +171,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                   const dt     = getDayType(year, month, d, holidayDays)
                   const wk     = dt !== 'weekday'
                   const bg     = sh === 'O'
-                    ? (wk ? '#eef2ff' : hovered ? '#fefce8' : 'var(--color-background-primary)')
+                    ? (wk ? '#eef2ff' : hovered ? color.accentBg : color.bg)
                     : clr.bg
                   const tooltip = denied
                     ? `${n.name} ${d}일: 희망 ${req === 'O' ? '오프' : req} → 배정 ${sh === 'O' ? '오프' : sh}`
@@ -179,9 +181,9 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                     <td key={d} title={tooltip} style={{
                       padding: 0, textAlign: 'center',
                       background: bg,
-                      borderBottom: '0.5px solid rgba(0,0,0,0.07)',
-                      borderRight: '0.5px solid rgba(0,0,0,0.05)',
-                      outline: isSup ? '2px solid #f97316' : undefined,
+                      borderBottom: '0.5px solid rgba(15,23,42,0.06)',
+                      borderRight: '0.5px solid rgba(15,23,42,0.04)',
+                      outline: isSup ? `2px solid ${color.warning}` : undefined,
                       outlineOffset: isSup ? -2 : undefined,
                     }}>
                       <div style={{
@@ -198,7 +200,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                         {denied && (
                           <span style={{
                             fontSize: 8, position: 'absolute', top: 0, right: 1,
-                            color: '#dc2626', fontWeight: 700,
+                            color: color.danger, fontWeight: 700,
                           }}>✕</span>
                         )}
                       </div>
@@ -209,53 +211,53 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 {/* 통계 — shift 카운트 */}
                 {STAT_SHIFTS.map(s => (
                   <td key={s} style={{
-                    padding: '3px 2px', textAlign: 'center', fontSize: 10, fontWeight: 500,
+                    padding: '3px 2px', textAlign: 'center', fontSize: 10, fontWeight: 600,
                     color: (SHIFT_COLOR[s] ?? SHIFT_COLOR['O']).text,
-                    background: 'var(--color-background-secondary)',
-                    borderBottom: '0.5px solid var(--color-border-secondary)',
+                    background: color.bgMuted,
+                    borderBottom: `0.5px solid ${color.border}`,
                   }}>
                     {st?.counts[s] ?? 0}
                   </td>
                 ))}
                 <td style={{
                   padding: '3px 4px', textAlign: 'center', fontWeight: 700, fontSize: 11,
-                  color: '#7c3aed', background: 'var(--color-background-secondary)',
-                  borderBottom: '0.5px solid var(--color-border-secondary)',
+                  color: color.purpleStrong, background: color.bgMuted,
+                  borderBottom: `0.5px solid ${color.border}`,
                 }}>
                   {st?.total_nights ?? 0}
                 </td>
                 <td style={{
                   padding: '3px 4px', textAlign: 'center', fontWeight: 700, fontSize: 11,
-                  background: 'var(--color-background-secondary)',
-                  borderBottom: '0.5px solid var(--color-border-secondary)',
+                  background: color.bgMuted, color: color.text,
+                  borderBottom: `0.5px solid ${color.border}`,
                 }}>
                   {st?.total_work ?? 0}
                 </td>
                 <td style={{
                   padding: '3px 4px', textAlign: 'center', fontSize: 10,
-                  color: 'var(--color-text-secondary)',
-                  background: 'var(--color-background-secondary)',
-                  borderBottom: '0.5px solid var(--color-border-secondary)',
+                  color: color.textSecondary,
+                  background: color.bgMuted,
+                  borderBottom: `0.5px solid ${color.border}`,
                   whiteSpace: 'nowrap',
                 }}>
                   {st ? `${st.total_hours}h` : ''}
                 </td>
                 <td title="리메인: 표준 근무일 대비 초과(+)/미달(−) 일수" style={{
                   padding: '3px 4px', textAlign: 'center', fontSize: 11, fontWeight: 700,
-                  color: st == null ? 'var(--color-text-secondary)'
-                       : st.remain > 0 ? '#ea580c'
-                       : st.remain < 0 ? '#2563eb'
-                       : 'var(--color-text-secondary)',
-                  background: 'var(--color-background-secondary)',
-                  borderBottom: '0.5px solid var(--color-border-secondary)',
+                  color: st == null ? color.textSecondary
+                       : st.remain > 0 ? color.warningStrong
+                       : st.remain < 0 ? color.accentStrong
+                       : color.textSecondary,
+                  background: color.bgMuted,
+                  borderBottom: `0.5px solid ${color.border}`,
                 }}>
                   {st != null ? (st.remain > 0 ? `+${st.remain}` : `${st.remain}`) : ''}
                 </td>
                 <td style={{
                   padding: '3px 4px', textAlign: 'center', fontSize: 11,
-                  color: 'var(--color-text-secondary)',
-                  background: 'var(--color-background-secondary)',
-                  borderBottom: '0.5px solid var(--color-border-secondary)',
+                  color: color.textSecondary,
+                  background: color.bgMuted,
+                  borderBottom: `0.5px solid ${color.border}`,
                   whiteSpace: 'nowrap',
                 }}>
                   {st?.request_rate ?? ''}
@@ -271,9 +273,9 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 position: 'sticky', left: 0, zIndex: 2,
                 padding: '3px 10px', fontSize: 11, fontWeight: 700,
                 textAlign: 'right', color: SHIFT_COLOR[sh].text,
-                background: 'var(--color-background-secondary)',
-                borderBottom: '0.5px solid var(--color-border-secondary)',
-                borderRight: '1px solid var(--color-border-secondary)',
+                background: color.bgMuted,
+                borderBottom: `0.5px solid ${color.border}`,
+                borderRight: `1px solid ${color.border}`,
               }}>
                 {sh} 합계
               </td>
@@ -290,17 +292,17 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 const ok  = cnt >= mn
                 return (
                   <td key={d} style={{
-                    textAlign: 'center', fontSize: 10, fontWeight: 600, padding: '2px 0',
-                    background: ok ? '#d1fae5' : '#fee2e2',
-                    color: ok ? '#065f46' : '#991b1b',
-                    borderBottom: '0.5px solid rgba(0,0,0,0.06)',
+                    textAlign: 'center', fontSize: 10, fontWeight: 700, padding: '2px 0',
+                    background: ok ? color.successBg : color.dangerBg,
+                    color: ok ? color.successStrong : color.dangerStrong,
+                    borderBottom: '0.5px solid rgba(15,23,42,0.06)',
                   }}>
                     {cnt}
                     <span style={{ fontSize: 8, opacity: 0.7 }}>/{mn}</span>
                   </td>
                 )
               })}
-              <td colSpan={STAT_COLS} style={{ background: 'var(--color-background-secondary)' }} />
+              <td colSpan={STAT_COLS} style={{ background: color.bgMuted }} />
             </tr>
           ))}
         </tbody>

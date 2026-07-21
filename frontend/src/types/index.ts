@@ -99,19 +99,19 @@ export const GROUP_LABEL: Record<GroupType, string> = {
 }
 
 export const GROUP_COLOR: Record<GroupType, string> = {
-  charge: '#6366f1',
-  leader: '#818cf8',
-  mid: '#34d399',
-  junior: '#fb923c',
-  first: '#94a3b8',
+  charge: '#7c5cfc',
+  leader: '#3182f6',
+  mid:    '#00a876',
+  junior: '#e8990c',
+  first:  '#8b95a1',
 }
 
 export const SHIFT_COLOR: Record<string, { bg: string; text: string }> = {
-  D:    { bg: '#d1fae5', text: '#065f46' },
-  E:    { bg: '#fef3c7', text: '#78350f' },
-  N:    { bg: '#ede9fe', text: '#4c1d95' },
-  '6D': { bg: '#bfdbfe', text: '#1e3a8a' },
-  '6N': { bg: '#fce7f3', text: '#831843' },
-  EDU:  { bg: '#fff7ed', text: '#7c2d12' },
-  O:    { bg: 'transparent', text: '#9ca3af' },
+  D:    { bg: '#e7f9f3', text: '#00875a' },
+  E:    { bg: '#fff4e5', text: '#b75e00' },
+  N:    { bg: '#f3efff', text: '#6938d3' },
+  '6D': { bg: '#eaf2ff', text: '#1b64da' },
+  '6N': { bg: '#ffeff5', text: '#d6336c' },
+  EDU:  { bg: '#fff1e6', text: '#c2540a' },
+  O:    { bg: 'transparent', text: '#b0b8c1' },
 }
