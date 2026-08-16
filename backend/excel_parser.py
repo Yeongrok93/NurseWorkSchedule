@@ -217,6 +217,17 @@ def _parse_real_format(ws, header_row: int) -> list[dict[str, Any]]:
     if sabun_col is None:
         raise ValueError("'사번' 컬럼을 찾을 수 없습니다")
 
+    # 날짜 헤더가 조/사번/성명과 같은 행이 아니라 바로 위 행에 있는 경우
+    # (예: 위 행 = 날짜 숫자, 헤더행 = 조/사번/성명 + 요일)
+    if not day_cols and header_row > 1:
+        for ci in range(ws.max_column):
+            raw = ws.cell(header_row - 1, ci + 1).value
+            if raw is None:
+                continue
+            cleaned = str(raw).strip().replace("일", "").strip()
+            if cleaned.isdigit() and 1 <= int(cleaned) <= 31:
+                day_cols[ci] = int(cleaned)
+
     # ── 2) A열 그룹 범위 구축 (병합셀 + 비병합 fallback) ─────────────────
     #   (min_row, max_row, group, flag)
     group_ranges: list[tuple[int, int, str, str | None]] = []
