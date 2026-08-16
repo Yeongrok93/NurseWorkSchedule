@@ -158,6 +158,113 @@ def _to_nurse_dict(idx: int, ai_nurse: dict) -> dict[str, Any]:
     }
 
 
+_PREV_SYSTEM_PROMPT = """너는 한국 병동의 간호사 '실제 확정 근무표'(지난달 근무 기록)를 읽고
+구조화하는 도우미다. 이건 희망사항이 아니라 이미 근무한 확정 기록이다.
+
+시트는 보통 사람 단위로 한 행씩, 이름과 1~31일 날짜별 실제 근무가 열로
+나열된 표다. 날짜 컬럼 헤더는 "1일", "8/1", "1" 등 형식이 병동마다
+다르니 스스로 해석해서 일(day, 1~31 정수)로 변환하라.
+
+각 날짜 칸의 값은 정확히 하나의 근무로 판단해 매핑한다 (희망 표시
+'^', '◆' 같은 부가 기호는 무시하고 근무 코드만 본다):
+- D, E, N → 그대로
+- 6D, 6N → 그대로 (2교대)
+- 교예, 보예, 교육, EDU → "EDU"
+- 빈 칸, OFF, O, 오프, 휴 → "O"
+
+사람마다 시트에 나온 모든 날짜의 근무를 entries에 빠짐없이 넣는다.
+헤더/요일/합계/빈 행은 결과에 포함하지 않는다. 표에 없는 내용은
+만들어내지 않는다."""
+
+_PREV_ENTRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "integer", "minimum": 1, "maximum": 31},
+        "shift": {"type": "string", "enum": _SHIFT_ENUM},
+    },
+    "required": ["day", "shift"],
+    "additionalProperties": False,
+}
+
+_PREV_LIST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "nurses": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "entries": {"type": "array", "items": _PREV_ENTRY_SCHEMA},
+                },
+                "required": ["name", "entries"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["nurses"],
+    "additionalProperties": False,
+}
+
+
+def parse_prev_month_with_ai(
+    file_obj, api_key: str, carry_days: int = 7, model: str | None = None,
+) -> list[dict[str, Any]]:
+    """전월 실제 근무표(임의 양식)를 OpenAI로 해석해
+    parse_prev_month_schedule()과 동일한 형식({"name":..., "tail": {...}})으로 반환한다.
+    offset 0 = 시트에서 발견된 가장 마지막 날짜, 음수로 갈수록 과거."""
+    from openai import OpenAI
+
+    wb = openpyxl.load_workbook(file_obj, data_only=True)
+    ws = wb.active
+    dump = _dump_grid(ws)
+    if not dump.strip():
+        raise ValueError("시트에서 읽을 내용을 찾지 못했습니다")
+
+    client = OpenAI(api_key=api_key)
+    resp = client.chat.completions.create(
+        model=model or os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
+        messages=[
+            {"role": "system", "content": _PREV_SYSTEM_PROMPT},
+            {"role": "user", "content": f"엑셀 시트 원본 (행/열 좌표 포함):\n\n{dump}"},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "prev_month_list", "schema": _PREV_LIST_SCHEMA, "strict": True},
+        },
+    )
+
+    msg = resp.choices[0].message
+    if msg.refusal:
+        raise ValueError(f"AI가 처리를 거부했습니다: {msg.refusal}")
+    if not msg.content:
+        raise ValueError("AI 응답이 비어 있습니다")
+
+    data = json.loads(msg.content)
+    ai_nurses = data.get("nurses", [])
+    if not ai_nurses:
+        raise ValueError("AI가 인식한 간호사가 없습니다 — 파일 내용을 확인해주세요")
+
+    all_days = [e["day"] for n in ai_nurses for e in n.get("entries", [])]
+    if not all_days:
+        raise ValueError("AI가 날짜별 근무를 하나도 찾지 못했습니다")
+    last_day = max(all_days)
+
+    results: list[dict[str, Any]] = []
+    for n in ai_nurses:
+        name = (n.get("name") or "").strip()
+        if not name:
+            continue
+        tail: dict[str, str] = {}
+        for e in n.get("entries", []):
+            offset = e["day"] - last_day
+            if -(carry_days - 1) <= offset <= 0:
+                tail[str(offset)] = e["shift"]
+        results.append({"name": name, "tail": tail})
+
+    return results
+
+
 def parse_excel_with_ai(file_obj, api_key: str, model: str | None = None) -> list[dict[str, Any]]:
     """엑셀 원본을 OpenAI로 해석해 표준 간호사 목록으로 변환한다.
     실패 시(키 오류·거부·형식 문제) 예외를 던진다 — 호출부에서 사용자에게 안내."""

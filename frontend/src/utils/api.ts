@@ -131,6 +131,15 @@ export async function parsePrevMonth(file: File, carryDays = 7): Promise<PrevMon
   return res.json()
 }
 
+/** 규칙 기반이 실패했을 때 AI(OpenAI)로 재시도 — 병동 자체 양식의 전월 실제 근무표 지원 */
+export async function parsePrevMonthAI(file: File, carryDays = 7): Promise<PrevMonthResult> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${BASE}/parse-prev-month-ai?carry_days=${carryDays}`, { method: 'POST', body: fd })
+  if (!res.ok) throw new Error((await res.json()).detail ?? 'AI 파싱 실패')
+  return res.json()
+}
+
 export async function getHolidays(year: number, month: number): Promise<Holiday[]> {
   const res = await fetch(`${BASE}/holidays?year=${year}&month=${month}`)
   return res.json()
