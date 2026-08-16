@@ -38,9 +38,13 @@ GRP_CLR = {
     "junior": "grp_J", "first": "grp_F",
 }
 MIN_STAFF = {
-    "weekday":  {Shift.D: 7, Shift.E: 6, Shift.N: 6},
-    "saturday": {Shift.D: 6, Shift.E: 5, Shift.N: 5},
-    "sunday":   {Shift.D: 5, Shift.E: 5, Shift.N: 5},
+    "monday":    {Shift.D: 7, Shift.E: 6, Shift.N: 6},
+    "tuesday":   {Shift.D: 7, Shift.E: 6, Shift.N: 6},
+    "wednesday": {Shift.D: 7, Shift.E: 6, Shift.N: 6},
+    "thursday":  {Shift.D: 7, Shift.E: 6, Shift.N: 6},
+    "friday":    {Shift.D: 7, Shift.E: 6, Shift.N: 6},
+    "saturday":  {Shift.D: 6, Shift.E: 5, Shift.N: 5},
+    "sunday":    {Shift.D: 5, Shift.E: 5, Shift.N: 5},
 }
 
 def _fill(h): return PatternFill("solid", fgColor=h)
@@ -50,12 +54,14 @@ def _center(): return Alignment(horizontal="center", vertical="center")
 def _left():   return Alignment(horizontal="left",   vertical="center")
 
 
-def build_excel(result: dict, nurses: list[Nurse], year: int, month: int, output: BytesIO):
+def build_excel(result: dict, nurses: list[Nurse], year: int, month: int, output: BytesIO,
+                min_staff: dict | None = None):
     schedule = result["schedule"]
     stats    = result["stats"]
     num_days = days_in_month(year, month)
     days     = range(1, num_days + 1)
     kr_hols  = _get_kr_holidays(year)
+    staff_req = min_staff or MIN_STAFF
     support_days = result.get("support_days", {})  # {서브그룹: [day, ...]}
 
     # 간호사 이름 → 지원일 set 매핑
@@ -204,7 +210,7 @@ def build_excel(result: dict, nurses: list[Nurse], year: int, month: int, output
             pairs = sum(1 for n in nurses if schedule.get(n.name,{}).get(str(d))=="6D")
             cnt_d = sum(1 for n in nurses if schedule.get(n.name,{}).get(str(d))==sh) + pairs
             dt    = day_type(year, month, d, kr_hols)
-            mn    = MIN_STAFF[dt][Shift(sh)]
+            mn    = staff_req[dt][Shift(sh)]
             ok    = cnt_d >= mn
             c = ws.cell(r, 3+d, cnt_d)
             c.fill=_fill(CLR["min_ok"] if ok else CLR["min_ng"])

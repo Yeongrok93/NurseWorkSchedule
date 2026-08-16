@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from excel_parser import parse_nurse_excel
+from excel_parser import parse_nurse_excel, parse_prev_month_schedule
 from excel_export import build_excel
 from note_parser import interpret_notes, apply_interpretation
 from infeasibility_analyzer import analyze as analyze_infeasibility
@@ -73,17 +73,26 @@ class NurseIn(BaseModel):
     no_night: bool = False                   # 야간 근무 불가 ('N 불가')
     independence_day: int | None = None      # 신입 독립 시작일
     weekly_fixed_off: list[int] = []         # 주차요일제 (0=월 … 6=일)
+    prev_tail: dict[str, str] = {}           # 전월 이월 근무 {"0":"N", "-1":"O", ...}
     career_years: int | None = None
     sabun: str = ""
     work_kind: str = ""
     note: str = ""
 
+_DEFAULT_MIN_STAFF = {
+    "monday":    {"D": 7, "E": 6, "N": 6},
+    "tuesday":   {"D": 7, "E": 6, "N": 6},
+    "wednesday": {"D": 7, "E": 6, "N": 6},
+    "thursday":  {"D": 7, "E": 6, "N": 6},
+    "friday":    {"D": 7, "E": 6, "N": 6},
+    "saturday":  {"D": 6, "E": 5, "N": 5},
+    "sunday":    {"D": 5, "E": 5, "N": 5},
+}
+
 class ConstraintConfig(BaseModel):
     year: int
     month: int
-    min_staff_weekday:  dict[str, int] = {"D": 7, "E": 6, "N": 6}
-    min_staff_saturday: dict[str, int] = {"D": 6, "E": 5, "N": 5}
-    min_staff_sunday:   dict[str, int] = {"D": 5, "E": 5, "N": 5}
+    min_staff: dict[str, dict[str, int]] = _DEFAULT_MIN_STAFF
     max_consecutive_work: int = 5
     night_dedicated_count: int = 14
     max_first_year: int = 15
@@ -122,6 +131,7 @@ def _to_nurse(ni: NurseIn) -> Nurse:
         no_night=ni.no_night,
         independence_day=ni.independence_day,
         weekly_fixed_off=list(ni.weekly_fixed_off or []),
+        prev_tail={int(k): Shift(v) for k, v in ni.prev_tail.items()},
     )
 
 def _make_config(cfg: ConstraintConfig) -> ScheduleConfig:
@@ -130,9 +140,8 @@ def _make_config(cfg: ConstraintConfig) -> ScheduleConfig:
         year=cfg.year,
         month=cfg.month,
         min_staff={
-            "weekday":  {Shift(k): v for k, v in cfg.min_staff_weekday.items()},
-            "saturday": {Shift(k): v for k, v in cfg.min_staff_saturday.items()},
-            "sunday":   {Shift(k): v for k, v in cfg.min_staff_sunday.items()},
+            day_key: {Shift(k): v for k, v in day_cfg.items()}
+            for day_key, day_cfg in cfg.min_staff.items()
         },
         max_consecutive_work=cfg.max_consecutive_work,
         night_dedicated_count=cfg.night_dedicated_count,
@@ -177,6 +186,20 @@ async def parse_excel(file: UploadFile = File(...)):
     try:
         nurses = parse_nurse_excel(io.BytesIO(content))
         return {"nurses": nurses, "count": len(nurses)}
+    except Exception as e:
+        raise HTTPException(422, f"파싱 오류: {e}")
+
+
+@app.post("/parse-prev-month")
+async def parse_prev_month(file: UploadFile = File(...), carry_days: int = 7):
+    """전월 실제 근무표 엑셀(본 프로그램 내보내기 형식) → 이름별 마지막 며칠 tail 반환.
+    적용은 프론트에서 현재 명단과 이름 매칭 후 사용자 확인을 거친다."""
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "xlsx 또는 xls 파일만 허용됩니다")
+    content = await file.read()
+    try:
+        rows = parse_prev_month_schedule(io.BytesIO(content), carry_days=carry_days)
+        return {"tail": {r["name"]: r["tail"] for r in rows}, "count": len(rows)}
     except Exception as e:
         raise HTTPException(422, f"파싱 오류: {e}")
 
@@ -286,6 +309,7 @@ async def export_schedule(job_id: str, req: ScheduleRequest):
         year=req.config.year,
         month=req.config.month,
         output=buf,
+        min_staff={k: {Shift(sk): sv for sk, sv in d.items()} for k, d in req.config.min_staff.items()},
     )
     buf.seek(0)
     filename = f"schedule_{req.config.year}{req.config.month:02d}.xlsx"

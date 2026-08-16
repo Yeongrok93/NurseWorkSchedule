@@ -22,10 +22,17 @@ export interface Nurse {
   no_night: boolean                // 야간 근무 불가 ('N 불가')
   independence_day: number | null  // 신입 독립 시작일
   weekly_fixed_off: number[]       // 주차요일제 (0=월 … 6=일)
+  prev_tail: Record<string, ShiftType>  // 전월 이월 근무 {"0":"N", "-1":"O", ...}
   career_years: number | null
   sabun: string
   work_kind: string                // 근무종류 원문 (3교대/야간전담/…)
   note: string
+}
+
+/** 전월 실제 근무표 파싱 결과 */
+export interface PrevMonthResult {
+  tail: Record<string, Record<string, ShiftType>>   // {이름: {"0":"N", ...}}
+  count: number
 }
 
 /** 특기사항 자연어 해석 결과 (사용자 확인 대상) */
@@ -44,12 +51,29 @@ export interface NoteInterpretResult {
   warning: string | null
 }
 
+export type WeekdayKey = 'monday'|'tuesday'|'wednesday'|'thursday'|'friday'|'saturday'|'sunday'
+
+export const WEEKDAY_KEYS: WeekdayKey[] = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
+export const WEEKDAY_LABEL: Record<WeekdayKey, string> = {
+  monday: '월요일', tuesday: '화요일', wednesday: '수요일', thursday: '목요일',
+  friday: '금요일', saturday: '토요일', sunday: '일요일·공휴일',
+}
+export const WEEKDAY_SHORT: Record<WeekdayKey, string> = {
+  monday: '월', tuesday: '화', wednesday: '수', thursday: '목',
+  friday: '금', saturday: '토', sunday: '일',
+}
+
+/** JS Date.getDay() (0=일) → 백엔드 day_type()과 동일한 요일 키. 공휴일은 'sunday' 취급. */
+export function weekdayKey(year: number, month: number, day: number, holidayDays: Set<number>): WeekdayKey {
+  if (holidayDays.has(day)) return 'sunday'
+  const wd = new Date(year, month - 1, day).getDay()
+  return (['sunday','monday','tuesday','wednesday','thursday','friday','saturday'] as const)[wd]
+}
+
 export interface ConstraintConfig {
   year: number
   month: number
-  min_staff_weekday: Record<string, number>
-  min_staff_saturday: Record<string, number>
-  min_staff_sunday: Record<string, number>
+  min_staff: Record<WeekdayKey, Record<string, number>>
   max_consecutive_work: number
   night_dedicated_count: number
   max_first_year: number

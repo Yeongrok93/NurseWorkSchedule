@@ -37,7 +37,7 @@ class ConstraintGroup:
 
 
 CONSTRAINT_GROUPS = [
-    ConstraintGroup("min_staff",       "일별 최소인원",    "평일/토/일 D·E·N 최소 인원 충족"),
+    ConstraintGroup("min_staff",       "일별 최소인원",    "요일별 D·E·N 최소 인원 충족"),
     ConstraintGroup("max_staff",       "일별 최대인원",    "최소+1 초과 배정 금지"),
     ConstraintGroup("leader",          "리더/차지 배치",   "각 shift 리더 최소 1명, 차지 중복 금지"),
     ConstraintGroup("transitions",     "금지 전환 패턴",   "N→D, N→E, E→D, 6N→D 등"),

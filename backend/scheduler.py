@@ -84,6 +84,9 @@ class Nurse:
     no_night: bool = False                     # 야간 근무 불가 (예: 'N 불가')
     independence_day: Optional[int] = None     # 신입 독립 시작일 (이후 동료와 근무 중복 금지)
     weekly_fixed_off: list[int] = field(default_factory=list)  # 주차요일제: 0=월 … 6=일
+    # 전월 이월 근무 (월경계 연속성 검사용 — 이번 달 근무시간/오프 집계에는 영향 없음)
+    # key: 0=전월 마지막날, -1=그 전날 ... (최대 NurseScheduler.CARRY_DAYS-1 까지)
+    prev_tail: dict[int, Shift] = field(default_factory=dict)
 
 
 @dataclass
@@ -91,10 +94,15 @@ class ScheduleConfig:
     year: int
     month: int
 
+    # 요일별 최소인원 (월~일 개별 설정 가능). 공휴일은 'sunday' 기준을 사용.
     min_staff: dict = field(default_factory=lambda: {
-        "weekday":  {Shift.D: 7, Shift.E: 6, Shift.N: 6},
-        "saturday": {Shift.D: 6, Shift.E: 5, Shift.N: 5},
-        "sunday":   {Shift.D: 5, Shift.E: 5, Shift.N: 5},
+        "monday":    {Shift.D: 7, Shift.E: 6, Shift.N: 6},
+        "tuesday":   {Shift.D: 7, Shift.E: 6, Shift.N: 6},
+        "wednesday": {Shift.D: 7, Shift.E: 6, Shift.N: 6},
+        "thursday":  {Shift.D: 7, Shift.E: 6, Shift.N: 6},
+        "friday":    {Shift.D: 7, Shift.E: 6, Shift.N: 6},
+        "saturday":  {Shift.D: 6, Shift.E: 5, Shift.N: 5},
+        "sunday":    {Shift.D: 5, Shift.E: 5, Shift.N: 5},
     })
 
     # 2교대 관련
@@ -153,15 +161,15 @@ def _get_kr_holidays(year: int):
     return {}
 
 
+WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
 def day_type(year: int, month: int, day: int, kr_holidays=None) -> str:
-    """'weekday' | 'saturday' | 'sunday'  (공휴일 → sunday)"""
+    """'monday'~'sunday' 중 하나 (공휴일 → 'sunday' 기준 적용)"""
     date = datetime.date(year, month, day)
     if kr_holidays and date in kr_holidays:
         return "sunday"
-    wd = calendar.weekday(year, month, day)
-    if wd == 5: return "saturday"
-    if wd == 6: return "sunday"
-    return "weekday"
+    return WEEKDAY_KEYS[calendar.weekday(year, month, day)]
 
 
 def _count_work_days(year: int, month: int) -> int:
@@ -210,6 +218,10 @@ ALL_SHIFTS    = ALL_WORK + EDU_SHIFTS + [Shift.O]
 
 class NurseScheduler:
 
+    # 전월 이월 근무를 최대 며칠까지 참고할지 (연속근무 5일·나이트블록 3일 등
+    # 하드 제약이 필요로 하는 최대 윈도우보다 여유있게 설정)
+    CARRY_DAYS = 7
+
     def __init__(self, nurses: list[Nurse], config: ScheduleConfig):
         self.nurses     = nurses
         self.cfg        = config
@@ -218,6 +230,7 @@ class NurseScheduler:
         self.kr_hols    = _get_kr_holidays(config.year)
         self.model      = cp_model.CpModel()
         self.sv: dict   = {}
+        self._work_cache: dict = {}
         self.target_h          = calc_target_hours(config.year, config.month)
         self.part_time_target_h = calc_part_time_target_hours(config.year, config.month)
 
@@ -244,6 +257,28 @@ class NurseScheduler:
     def _dt(self, d: int) -> str:
         return day_type(self.cfg.year, self.cfg.month, d, self.kr_hols)
 
+    # ── 전월 이월(prev_tail) 유틸 ────────────────────────────────────────────
+    #    prev_tail이 있는 간호사만 경계일(0, -1, ...) 변수가 추가로 생기고,
+    #    없는 간호사는 기존과 완전히 동일하게 동작한다 (회귀 없음).
+
+    def _touches_current(self, *ds: int) -> bool:
+        """윈도우 안의 날짜 중 하나라도 이번 달(결정 변수)이면 True.
+        전월 데이터끼리만의 윈도우는 이미 확정된 과거이므로 제약을 걸 필요 없음."""
+        return any(d in self.days for d in ds)
+
+    def _work_var(self, n: "Nurse", d: int):
+        """d에 실근무(D/E/N/6D/6N/EDU) 여부를 나타내는 BoolVar (캐시됨).
+        d가 이번 달이면 진짜 결정변수 기반, 전월 이월일이면 고정값 기반으로
+        똑같이 만들어지므로 호출부는 구분할 필요가 없다."""
+        key = (n.id, d)
+        if key in self._work_cache:
+            return self._work_cache[key]
+        wv = self.model.new_bool_var(f"work_{n.id}_{d}")
+        self.model.add(sum(self.sv[n.id][d][s] for s in ALL_WORK_WITH_EDU) >= 1).only_enforce_if(wv)
+        self.model.add(sum(self.sv[n.id][d][s] for s in ALL_WORK_WITH_EDU) == 0).only_enforce_if(wv.negated())
+        self._work_cache[key] = wv
+        return wv
+
     # ── 변수 생성 ─────────────────────────────────────────────────────────────
 
     def _build_variables(self):
@@ -265,6 +300,19 @@ class NurseScheduler:
                 # EDU는 고정 리퀘스트가 있는 날에만 허용 (solver 자유 배정 금지)
                 if Shift.EDU in allowed and d not in edu_days[n.id]:
                     self.model.add(self.sv[n.id][d][Shift.EDU] == 0)
+
+        # 전월 이월일: 값이 고정된 BoolVar로 생성 (결정변수 아님, 이미 일어난 사실).
+        # offset 0 = 전월 마지막날, -1 = 그 전날 ...
+        min_offset = -(self.CARRY_DAYS - 1)
+        for n in self.nurses:
+            for offset, shift in n.prev_tail.items():
+                if offset < min_offset or offset > 0:
+                    continue
+                self.sv[n.id][offset] = {}
+                for s in ALL_SHIFTS:
+                    var = self.model.new_bool_var(f"prev_n{n.id}_d{offset}_{s.value}")
+                    self.model.add(var == (1 if s == shift else 0))
+                    self.sv[n.id][offset][s] = var
 
     # ── Hard: 기본 ────────────────────────────────────────────────────────────
 
@@ -296,19 +344,23 @@ class NurseScheduler:
         for n in self.nurses:
             if not n.is_night_dedicated:
                 continue
-            for d in self.days:
-                if d + 2 not in self.days:
+            sv = self.sv[n.id]
+            key_set = set(sv.keys())
+            for d in sorted(key_set):
+                if d + 2 not in key_set:
+                    continue
+                if not self._touches_current(d, d + 1, d + 2):
                     continue
                 block_end = self.model.new_bool_var(f"nd_block_end_{n.id}_{d}")
                 self.model.add_bool_and([
-                    self.sv[n.id][d][Shift.N],
-                    self.sv[n.id][d + 1][Shift.O],
+                    sv[d][Shift.N],
+                    sv[d + 1][Shift.O],
                 ]).only_enforce_if(block_end)
                 self.model.add_bool_or([
-                    self.sv[n.id][d][Shift.N].negated(),
-                    self.sv[n.id][d + 1][Shift.O].negated(),
+                    sv[d][Shift.N].negated(),
+                    sv[d + 1][Shift.O].negated(),
                 ]).only_enforce_if(block_end.negated())
-                self.model.add_implication(block_end, self.sv[n.id][d + 2][Shift.N].negated())
+                self.model.add_implication(block_end, sv[d + 2][Shift.N].negated())
 
     # ── Hard: 차지 제약 ───────────────────────────────────────────────────────
 
@@ -453,13 +505,15 @@ class NurseScheduler:
 
     def _c_forbidden_transitions(self):
         for n in self.nurses:
-            for d in self.days:
+            sv = self.sv[n.id]
+            key_set = set(sv.keys())
+            for d in sorted(key_set):
                 d1 = d + 1
                 d2 = d + 2
-                if d1 not in self.days:
+                if d1 not in key_set:
                     continue
-
-                sv = self.sv[n.id]
+                if not self._touches_current(d, d1):
+                    continue  # 둘 다 전월(이미 확정된 과거)이면 검사 불필요
 
                 # 3교대
                 self.model.add_implication(sv[d][Shift.N], sv[d1][Shift.D].negated())
@@ -480,7 +534,7 @@ class NurseScheduler:
                 self.model.add_implication(sv[d][Shift.D6], sv[d1][Shift.N].negated())
 
                 # N→O→D/6D 금지, 6N→O→6D 금지
-                if d2 in self.days:
+                if d2 in key_set and self._touches_current(d, d1, d2):
                     # N→O→* 패턴
                     nod = self.model.new_bool_var(f"nod_{n.id}_{d}")
                     self.model.add_bool_and([sv[d][Shift.N], sv[d1][Shift.O]]).only_enforce_if(nod)
@@ -497,69 +551,69 @@ class NurseScheduler:
     # ── Hard: 연속 근무 ───────────────────────────────────────────────────────
 
     def _c_max_consecutive_work(self):
+        """연속 근무일 상한 (전월 이월분이 있으면 월경계를 넘어서도 검사)."""
         max_w = self.cfg.max_consecutive_work
         for n in self.nurses:
-            for d in self.days:
-                window = range(d, min(d + max_w + 1, self.num_days + 1))
-                if len(window) == max_w + 1:
-                    self.model.add(
-                        sum(
-                            self.sv[n.id][wd][s]
-                            for wd in window
-                            for s in ALL_WORK_WITH_EDU
-                        ) <= max_w
-                    )
+            sv = self.sv[n.id]
+            key_set = set(sv.keys())
+            for d in sorted(key_set):
+                window = list(range(d, d + max_w + 1))
+                if not all(w in key_set for w in window):
+                    continue
+                if not self._touches_current(*window):
+                    continue
+                self.model.add(
+                    sum(sv[wd][s] for wd in window for s in ALL_WORK_WITH_EDU) <= max_w
+                )
 
     def _c_min_consecutive_work(self):
-        """단독 1일 근무 금지 (N전담·주2일제 제외)."""
+        """단독 1일 근무 금지 (N전담·주2일제 제외).
+        전월 이월분이 있으면 월 첫날의 고립 여부도 정확히 판정한다."""
         for n in self.nurses:
             if n.is_night_dedicated or n.is_part_time:
                 continue
             for d in self.days:
-                work_d = self.model.new_bool_var(f"work_{n.id}_{d}")
-                self.model.add(sum(self.sv[n.id][d][s] for s in ALL_WORK_WITH_EDU) >= 1).only_enforce_if(work_d)
-                self.model.add(sum(self.sv[n.id][d][s] for s in ALL_WORK_WITH_EDU) == 0).only_enforce_if(work_d.negated())
-
+                work_d = self._work_var(n, d)
                 neighbors = [work_d.negated()]
-                for dd, suffix in [(d-1, "p"), (d+1, "n")]:
-                    if dd in self.days:
-                        nb = self.model.new_bool_var(f"work_{n.id}_{d}_{suffix}")
-                        self.model.add(sum(self.sv[n.id][dd][s] for s in ALL_WORK_WITH_EDU) >= 1).only_enforce_if(nb)
-                        self.model.add(sum(self.sv[n.id][dd][s] for s in ALL_WORK_WITH_EDU) == 0).only_enforce_if(nb.negated())
-                        neighbors.append(nb)
+                for dd in (d - 1, d + 1):
+                    if dd in self.sv[n.id]:
+                        neighbors.append(self._work_var(n, dd))
                 self.model.add_bool_or(neighbors)
 
     # ── Hard: N 블록 (3교대) ──────────────────────────────────────────────────
 
     def _c_night_block_3shift(self):
         for n in self.nurses:
-            for d in self.days:
-                # N 연속 4개 금지
+            sv = self.sv[n.id]
+            key_set = set(sv.keys())
+            for d in sorted(key_set):
+                # N 연속 4개 금지 (전월 이월 포함)
                 window = [d, d+1, d+2, d+3]
-                if all(w in self.days for w in window):
-                    self.model.add(
-                        sum(self.sv[n.id][w][Shift.N] for w in window) <= 3
-                    )
+                if all(w in key_set for w in window) and self._touches_current(*window):
+                    self.model.add(sum(sv[w][Shift.N] for w in window) <= 3)
 
-                # N 단독 근무 금지 (인접 N 또는 6N 있어야 함)
-                neighbors = [self.sv[n.id][d][Shift.N].negated()]
-                if d-1 in self.days:
-                    neighbors.append(self.sv[n.id][d-1][Shift.N])
-                    neighbors.append(self.sv[n.id][d-1][Shift.N6])
-                if d+1 in self.days:
-                    neighbors.append(self.sv[n.id][d+1][Shift.N])
-                    neighbors.append(self.sv[n.id][d+1][Shift.N6])
+            for d in self.days:
+                # N 단독 근무 금지 (인접 N 또는 6N 있어야 함, 전월 이월 포함)
+                neighbors = [sv[d][Shift.N].negated()]
+                if d-1 in key_set:
+                    neighbors.append(sv[d-1][Shift.N])
+                    neighbors.append(sv[d-1][Shift.N6])
+                if d+1 in key_set:
+                    neighbors.append(sv[d+1][Shift.N])
+                    neighbors.append(sv[d+1][Shift.N6])
                 self.model.add_bool_or(neighbors)
 
     def _c_night_block_2shift(self):
         for n in self.nurses:
             if not n.can_two_shift:
                 continue
+            sv = self.sv[n.id]
+            key_set = set(sv.keys())
             for s2 in [Shift.D6, Shift.N6]:
-                for d in self.days:
+                for d in sorted(key_set):
                     window = [d, d+1, d+2]
-                    if all(w in self.days for w in window):
-                        self.model.add(sum(self.sv[n.id][w][s2] for w in window) <= 2)
+                    if all(w in key_set for w in window) and self._touches_current(*window):
+                        self.model.add(sum(sv[w][s2] for w in window) <= 2)
 
     # ── Hard: 프리셉터 지원일 ────────────────────────────────────────────────
 
@@ -675,13 +729,16 @@ class NurseScheduler:
 
     def _c_no_4_consecutive_nights(self):
         for n in self.nurses:
-            for d in self.days:
+            sv = self.sv[n.id]
+            key_set = set(sv.keys())
+            for d in sorted(key_set):
                 window = [d, d + 1, d + 2, d + 3]
-                if not all(w in self.days for w in window):
+                if not all(w in key_set for w in window):
+                    continue
+                if not self._touches_current(*window):
                     continue
                 self.model.add(
-                    sum(self.sv[n.id][w][Shift.N] + self.sv[n.id][w][Shift.N6]
-                        for w in window) <= 3
+                    sum(sv[w][Shift.N] + sv[w][Shift.N6] for w in window) <= 3
                 )
 
     # ── Hard: 주차요일제 (매주 지정 요일 고정 오프) ─────────────────────────

@@ -1,5 +1,7 @@
-import type { ConstraintConfig } from '../types'
-import { color, radius } from '../theme'
+import { Fragment } from 'react'
+import type { ConstraintConfig, WeekdayKey } from '../types'
+import { WEEKDAY_KEYS, WEEKDAY_LABEL } from '../types'
+import { color, radius, button } from '../theme'
 
 interface Props {
   config: ConstraintConfig
@@ -35,18 +37,21 @@ const row: React.CSSProperties = {
   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
 }
 
-const DAY_TYPES = [
-  { key: 'weekday',  label: '평일' },
-  { key: 'saturday', label: '토요일' },
-  { key: 'sunday',   label: '일요일·공휴일' },
-] as const
+const WD_COLOR = (key: WeekdayKey) =>
+  key === 'sunday' ? color.dangerStrong : key === 'saturday' ? color.purpleStrong : color.text
 
 export default function ConstraintPanel({ config, onChange }: Props) {
-  function setStaff(type: 'weekday'|'saturday'|'sunday', shift: string, val: number) {
-    onChange({ ...config, [`min_staff_${type}`]: { ...(config[`min_staff_${type}`] as any), [shift]: val } })
+  function setStaff(day: WeekdayKey, shift: string, val: number) {
+    onChange({ ...config, min_staff: { ...config.min_staff, [day]: { ...config.min_staff[day], [shift]: val } } })
   }
   function set(key: keyof ConstraintConfig, val: number) {
     onChange({ ...config, [key]: val })
+  }
+  function applyWeekdaysToAll(from: WeekdayKey) {
+    const src = config.min_staff[from]
+    const next = { ...config.min_staff }
+    for (const k of WEEKDAY_KEYS.slice(0, 5)) next[k] = { ...src }
+    onChange({ ...config, min_staff: next })
   }
 
   return (
@@ -54,29 +59,35 @@ export default function ConstraintPanel({ config, onChange }: Props) {
 
       {/* 최소 인원 */}
       <div>
-        <div style={sectionTitle}>👥 일별 최소 인원</div>
-        <div style={{ fontSize: 11, color: color.textTertiary, marginBottom: 8, lineHeight: 1.5 }}>
+        <div style={sectionTitle}>👥 요일별 최소 인원</div>
+        <div style={{ fontSize: 11, color: color.textTertiary, marginBottom: 10, lineHeight: 1.5 }}>
           생성된 표는 이 인원을 보장합니다 (불가능한 경우에만 자동 완화).<br/>
-          기간(년/월)은 상단 헤더에서 변경하세요.
+          요일마다 필요 인원이 다르면 각각 설정하세요. 기간(년/월)은 상단 헤더에서 변경합니다.
         </div>
-        {DAY_TYPES.map(({ key, label: lbl }) => (
-          <div key={key} style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6,
-              color: key === 'sunday' ? color.dangerStrong : key === 'saturday' ? color.purpleStrong : color.text }}>
-              {lbl}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '52px 1fr 1fr 1fr', gap: '6px 8px', alignItems: 'center' }}>
+          <span />
+          {(['D','E','N'] as const).map(sh => (
+            <span key={sh} style={{ ...label, textAlign: 'center' as const, marginBottom: 0 }}>{sh}</span>
+          ))}
+          {WEEKDAY_KEYS.map(wk => (
+            <Fragment key={wk}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: WD_COLOR(wk) }}>
+                {WEEKDAY_LABEL[wk].replace('요일', '').replace('·공휴일', '')}
+              </span>
               {(['D','E','N'] as const).map(sh => (
-                <div key={sh}>
-                  <span style={{ ...label, textAlign: 'center' as const }}>{sh}</span>
-                  <input type="number" min={1} max={20} style={numInput}
-                    value={(config[`min_staff_${key}`] as any)[sh] ?? 0}
-                    onChange={e => setStaff(key, sh, +e.target.value)} />
-                </div>
+                <input key={sh} type="number" min={1} max={20} style={numInput}
+                  value={config.min_staff[wk]?.[sh] ?? 0}
+                  onChange={e => setStaff(wk, sh, +e.target.value)} />
               ))}
-            </div>
-          </div>
-        ))}
+            </Fragment>
+          ))}
+        </div>
+
+        <button onClick={() => applyWeekdaysToAll('monday')}
+          style={button('secondary', { marginTop: 10, width: '100%', padding: '7px', fontSize: 11.5 })}>
+          월요일 값을 평일(월~금) 전체에 일괄 적용
+        </button>
       </div>
 
       {/* 근무 패턴 */}

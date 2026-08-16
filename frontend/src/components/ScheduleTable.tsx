@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Nurse, ScheduleResult, ConstraintConfig, ShiftType, Holiday } from '../types'
-import { SHIFT_COLOR, GROUP_COLOR, GROUP_LABEL } from '../types'
+import { SHIFT_COLOR, GROUP_COLOR, GROUP_LABEL, weekdayKey } from '../types'
 import { color, radius } from '../theme'
 
 interface Props {
@@ -16,12 +16,6 @@ const DOW = ['일','월','화','수','목','금','토']
 
 // sticky 좌측 열 너비
 const W_GRP = 42, W_NAME = 92, W_ATTR = 50
-
-function getDayType(year: number, month: number, day: number, holidayDays: Set<number>) {
-  if (holidayDays.has(day)) return 'sunday'
-  const wd = new Date(year, month - 1, day).getDay()
-  return wd === 6 ? 'saturday' : wd === 0 ? 'sunday' : 'weekday'
-}
 
 function thBase(): React.CSSProperties {
   return {
@@ -53,12 +47,6 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
   const holidayDays = new Set(holidays.map(h => h.day))
   const [hoverRow, setHoverRow] = useState<number | null>(null)
 
-  const minStaff = {
-    weekday:  config.min_staff_weekday,
-    saturday: config.min_staff_saturday,
-    sunday:   config.min_staff_sunday,
-  }
-
   const displayNurses = nurses.filter(n =>
     (!filterGroup || n.group === filterGroup) &&
     (!searchName || n.name.toLowerCase().includes(searchName.toLowerCase()))
@@ -85,9 +73,9 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
             <th style={{ ...thBase(), position: 'sticky', top: 0, left: W_GRP, zIndex: 5, minWidth: W_NAME, width: W_NAME }}>이름</th>
             <th style={{ ...thBase(), position: 'sticky', top: 0, left: W_GRP + W_NAME, zIndex: 5, minWidth: W_ATTR, width: W_ATTR }}>속성</th>
             {days.map(d => {
-              const dt  = getDayType(year, month, d, holidayDays)
+              const dt  = weekdayKey(year, month, d, holidayDays)
               const dow = new Date(year, month - 1, d).getDay()
-              const wk  = dt !== 'weekday'
+              const wk  = dt === 'saturday' || dt === 'sunday'
               const hd  = holidayDays.has(d)
               return (
                 <th key={d} title={hd ? holidays.find(h => h.day === d)?.name : undefined}
@@ -168,8 +156,8 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                   const denied = req !== undefined && req !== sh  // 희망 미반영
                   const isSup  = supSet.has(d)                    // 프리셉터 지원일
                   const clr    = SHIFT_COLOR[sh] ?? SHIFT_COLOR['O']
-                  const dt     = getDayType(year, month, d, holidayDays)
-                  const wk     = dt !== 'weekday'
+                  const dt     = weekdayKey(year, month, d, holidayDays)
+                  const wk     = dt === 'saturday' || dt === 'sunday'
                   const bg     = sh === 'O'
                     ? (wk ? '#eef2ff' : hovered ? color.accentBg : color.bg)
                     : clr.bg
@@ -280,7 +268,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                 {sh} 합계
               </td>
               {days.map(d => {
-                const dt      = getDayType(year, month, d, holidayDays)
+                const dt      = weekdayKey(year, month, d, holidayDays)
                 const counted = nurses.filter(n => !n.is_preceptee)
                 const extra   = sh === 'D'
                   ? counted.filter(n => (result.schedule[n.name]?.[String(d)] ?? 'O') === '6D').length
@@ -288,7 +276,7 @@ export default function ScheduleTable({ result, nurses, config, holidays, filter
                   ? counted.filter(n => (result.schedule[n.name]?.[String(d)] ?? 'O') === '6N').length
                   : 0
                 const cnt = counted.filter(n => (result.schedule[n.name]?.[String(d)] ?? 'O') === sh).length + extra
-                const mn  = (minStaff[dt] as any)[sh] ?? 0
+                const mn  = (config.min_staff[dt] as any)?.[sh] ?? 0
                 const ok  = cnt >= mn
                 return (
                   <td key={d} style={{

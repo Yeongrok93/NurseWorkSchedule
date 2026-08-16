@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Nurse, ScheduleResult, ConstraintConfig, Holiday } from '../types'
-import { SHIFT_COLOR } from '../types'
+import { SHIFT_COLOR, weekdayKey } from '../types'
 import { color, radius, chip, button } from '../theme'
 
 interface Props {
@@ -17,12 +17,6 @@ interface Denied {
   day: number
   wanted: string
   got: string
-}
-
-function getDayType(year: number, month: number, day: number, holidayDays: Set<number>) {
-  if (holidayDays.has(day)) return 'sunday'
-  const wd = new Date(year, month - 1, day).getDay()
-  return wd === 6 ? 'saturday' : wd === 0 ? 'sunday' : 'weekday'
 }
 
 function Card({ children, onClick, clickable }: { children: React.ReactNode; onClick?: () => void; clickable?: boolean }) {
@@ -70,15 +64,10 @@ export default function ResultSummary({ result, nurses, config, holidays, elapse
     // 최소인원 미달 슬롯 (프리셉티 제외, 6D→D / 6N→N)
     const numDays = new Date(config.year, config.month, 0).getDate()
     const holidayDays = new Set(holidays.map(h => h.day))
-    const minStaff = {
-      weekday:  config.min_staff_weekday,
-      saturday: config.min_staff_saturday,
-      sunday:   config.min_staff_sunday,
-    }
     const counted = nurses.filter(n => !n.is_preceptee)
     let shortSlots = 0
     for (let d = 1; d <= numDays; d++) {
-      const dt = getDayType(config.year, config.month, d, holidayDays)
+      const dt = weekdayKey(config.year, config.month, d, holidayDays)
       for (const sh of ['D','E','N'] as const) {
         const extra = sh === 'D'
           ? counted.filter(n => (result.schedule[n.name]?.[String(d)] ?? 'O') === '6D').length
@@ -86,7 +75,7 @@ export default function ResultSummary({ result, nurses, config, holidays, elapse
           ? counted.filter(n => (result.schedule[n.name]?.[String(d)] ?? 'O') === '6N').length
           : 0
         const cnt = counted.filter(n => (result.schedule[n.name]?.[String(d)] ?? 'O') === sh).length + extra
-        if (cnt < ((minStaff[dt] as any)[sh] ?? 0)) shortSlots++
+        if (cnt < ((config.min_staff[dt] as any)?.[sh] ?? 0)) shortSlots++
       }
     }
     return { reqTotal, reqOk, deniedList, remainMin, remainMax, shortSlots }

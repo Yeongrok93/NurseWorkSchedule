@@ -1,6 +1,6 @@
 import type {
   ConstraintConfig, Nurse, ScheduleResult, Holiday,
-  NoteInterpretResult, NoteInterpretation,
+  NoteInterpretResult, NoteInterpretation, PrevMonthResult,
 } from '../types'
 
 // 개발: VITE_API_URL(.env.local) 사용 / 배포·exe 빌드: 같은 서버에서 서빙되므로 상대 경로
@@ -112,6 +112,14 @@ export async function applyNotes(
   })
   if (!res.ok) throw new Error('적용 실패')
   return (await res.json()).nurses
+}
+
+export async function parsePrevMonth(file: File, carryDays = 7): Promise<PrevMonthResult> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${BASE}/parse-prev-month?carry_days=${carryDays}`, { method: 'POST', body: fd })
+  if (!res.ok) throw new Error((await res.json()).detail ?? '파싱 실패')
+  return res.json()
 }
 
 export async function getHolidays(year: number, month: number): Promise<Holiday[]> {

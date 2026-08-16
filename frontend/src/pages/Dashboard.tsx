@@ -15,13 +15,22 @@ import SolverProgress from '../components/SolverProgress'
 import ScheduleTable from '../components/ScheduleTable'
 import ResultSummary from '../components/ResultSummary'
 import NoteReviewPanel from '../components/NoteReviewPanel'
+import PrevMonthUpload from '../components/PrevMonthUpload'
+
+const DEFAULT_MIN_STAFF: ConstraintConfig['min_staff'] = {
+  monday:    { D: 7, E: 6, N: 6 },
+  tuesday:   { D: 7, E: 6, N: 6 },
+  wednesday: { D: 7, E: 6, N: 6 },
+  thursday:  { D: 7, E: 6, N: 6 },
+  friday:    { D: 7, E: 6, N: 6 },
+  saturday:  { D: 6, E: 5, N: 5 },
+  sunday:    { D: 5, E: 5, N: 5 },
+}
 
 const DEFAULT_CONFIG: ConstraintConfig = {
   year: new Date().getFullYear(),
   month: new Date().getMonth() + 1,
-  min_staff_weekday:  { D: 7, E: 6, N: 6 },
-  min_staff_saturday: { D: 6, E: 5, N: 5 },
-  min_staff_sunday:   { D: 5, E: 5, N: 5 },
+  min_staff: DEFAULT_MIN_STAFF,
   max_consecutive_work: 5,
   night_dedicated_count: 14,
   max_first_year: 15,
@@ -53,6 +62,24 @@ function saveLS(key: string, value: unknown) {
   } catch { /* 저장 실패는 무시 */ }
 }
 
+/** 구버전(평일/토/일 3구간) 저장값 → 요일별 7구간으로 마이그레이션 */
+function migrateConfig(raw: any): Partial<ConstraintConfig> {
+  if (!raw) return {}
+  if (raw.min_staff && !raw.min_staff_weekday) return raw   // 이미 신버전
+  if (raw.min_staff_weekday) {
+    const { min_staff_weekday, min_staff_saturday, min_staff_sunday, ...rest } = raw
+    return {
+      ...rest,
+      min_staff: {
+        monday: min_staff_weekday, tuesday: min_staff_weekday, wednesday: min_staff_weekday,
+        thursday: min_staff_weekday, friday: min_staff_weekday,
+        saturday: min_staff_saturday, sunday: min_staff_sunday,
+      },
+    }
+  }
+  return raw
+}
+
 // ─── 토스트 ──────────────────────────────────────────────────────────────────
 
 interface Toast { id: number; msg: string; kind: 'ok' | 'err' | 'info' }
@@ -65,7 +92,9 @@ const TOAST_META = {
 
 export default function Dashboard() {
   const [nurses,   setNurses]   = useState<Nurse[]>(() => loadLS('duty.nurses', []))
-  const [config,   setConfig]   = useState<ConstraintConfig>(() => ({ ...DEFAULT_CONFIG, ...loadLS('duty.config', {}) }))
+  const [config,   setConfig]   = useState<ConstraintConfig>(
+    () => ({ ...DEFAULT_CONFIG, ...migrateConfig(loadLS('duty.config', {})) })
+  )
   const [result,   setResult]   = useState<ScheduleResult | null>(() => loadLS('duty.result', null))
   const [jobId,    setJobId]    = useState<string | null>(() => loadLS('duty.jobId', null))
   const [status,   setStatus]   = useState<SolverStatus>(result ? 'done' : 'idle')
@@ -346,6 +375,16 @@ export default function Dashboard() {
                 {nurses.length > 0 && (
                   <div style={{ fontSize: 11, color: color.textTertiary, marginBottom: 10, lineHeight: 1.5 }}>
                     이름을 클릭하면 희망근무 확인·속성 수정이 가능합니다.
+                  </div>
+                )}
+
+                {/* 전월 이월 근무 (월경계 연속성) */}
+                {nurses.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <PrevMonthUpload nurses={nurses} onMerged={(merged, matched, total) => {
+                      setNurses(merged)
+                      toast(`전월 근무표 ${total}명 중 ${matched}명 매칭 반영`, matched > 0 ? 'ok' : 'err')
+                    }} />
                   </div>
                 )}
 
@@ -780,6 +819,7 @@ function NurseAddRow({ onAdd, nextId }: { onAdd: (n: Nurse) => void; nextId: num
       no_night: false,
       independence_day: null,
       weekly_fixed_off: [],
+      prev_tail: {},
       career_years: null,
       sabun: '',
       work_kind: '',

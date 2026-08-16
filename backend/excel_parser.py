@@ -393,6 +393,7 @@ def _parse_real_format(ws, header_row: int) -> list[dict[str, Any]]:
             "no_night": no_night,
             "independence_day": independence_day,
             "weekly_fixed_off": [],
+            "prev_tail": {},
             "preferred_requests": preferred,
             "fixed_requests": fixed,
             "preceptor_subgroup": preceptor_subgroup,
@@ -516,6 +517,7 @@ def _parse_legacy_format(ws, header_row: int) -> list[dict[str, Any]]:
             "no_night": False,
             "independence_day": None,
             "weekly_fixed_off": [],
+            "prev_tail": {},
             "preferred_requests": preferred,
             "fixed_requests": fixed,
             "preceptor_subgroup": None,
@@ -528,3 +530,82 @@ def _parse_legacy_format(ws, header_row: int) -> list[dict[str, Any]]:
         })
 
     return nurses
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 전월 실제 근무표 (월경계 연속성용)
+# ═════════════════════════════════════════════════════════════════════════════
+# 이 프로그램이 내보낸 듀티표(excel_export.py의 build_excel 결과물)를 그대로
+# 재업로드하는 것을 전제로 한다. 2행 헤더: 그룹/이름/속성 + "일\n요일" 형식의
+# 날짜 컬럼. 셀 값은 "D", "E^", "N◆" 처럼 희망/지원일 표시(^,◆)가 붙을 수 있고
+# 오프는 빈 문자열이다.
+
+_PREV_VALID_SHIFTS = {"D", "E", "N", "6D", "6N", "EDU"}
+
+
+def _clean_prev_cell(raw) -> str:
+    """'E^', 'N◆', ' 6D ' 등 → 'E', 'N', '6D'. 빈 값/미인식 값은 'O'."""
+    if raw is None:
+        return "O"
+    s = str(raw).strip()
+    s = s.rstrip("^◆").strip()
+    return s if s in _PREV_VALID_SHIFTS else "O"
+
+
+def parse_prev_month_schedule(file_obj, carry_days: int = 7) -> list[dict[str, Any]]:
+    """
+    전월 실제 근무표 엑셀 → [{"name": str, "tail": {"-2": "N", "-1": "O", "0": "D"}}, ...]
+    offset 0 = 그 파일의 마지막 날짜, 음수로 갈수록 과거.
+    최대 carry_days일만 반환한다 (그 이상은 이번 달 스케줄링에 불필요).
+    """
+    wb = openpyxl.load_workbook(file_obj, data_only=True)
+    ws = wb.active
+
+    # ── 헤더 행 탐색 ("이름" 셀이 있는 행) ──
+    header_row = None
+    name_col = None
+    for r in range(1, min(ws.max_row + 1, 10)):
+        for c in range(1, min(ws.max_column + 1, 8)):
+            v = ws.cell(r, c).value
+            if v and str(v).strip() in ("이름", "성명"):
+                header_row, name_col = r, c
+                break
+        if header_row:
+            break
+    if header_row is None:
+        raise ValueError("'이름' 컬럼을 찾을 수 없습니다 (본 프로그램이 내보낸 근무표 형식이어야 합니다)")
+
+    # ── 날짜 컬럼 탐색: "17\n금" 또는 "17" 형태, 앞부분 숫자만 추출 ──
+    day_cols: dict[int, int] = {}   # col_index(1-based) → day
+    for c in range(name_col + 1, ws.max_column + 1):
+        v = ws.cell(header_row, c).value
+        if v is None:
+            continue
+        head = str(v).strip().split("\n")[0].replace("일", "").strip()
+        if head.isdigit() and 1 <= int(head) <= 31:
+            day_cols[c] = int(head)
+
+    if not day_cols:
+        raise ValueError("날짜 컬럼을 찾을 수 없습니다")
+
+    sorted_days = sorted(day_cols.items(), key=lambda kv: kv[1])  # [(col, day), ...] 오름차순
+    last_day = sorted_days[-1][1]
+    # offset = day - last_day (0 이하), carry_days개만 유지
+    tail_cols = [(col, day) for col, day in sorted_days if day > last_day - carry_days]
+
+    results: list[dict[str, Any]] = []
+    for r in range(header_row + 1, ws.max_row + 1):
+        name_raw = ws.cell(r, name_col).value
+        if not name_raw or not str(name_raw).strip():
+            continue
+        name = str(name_raw).strip()
+        name = re.sub(r"^★\s*", "", name)   # N전담 마커 제거
+
+        tail: dict[str, str] = {}
+        for col, day in tail_cols:
+            offset = day - last_day
+            tail[str(offset)] = _clean_prev_cell(ws.cell(r, col).value)
+
+        results.append({"name": name, "tail": tail})
+
+    return results
