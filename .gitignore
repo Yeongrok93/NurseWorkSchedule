@@ -21,6 +21,12 @@ node_modules/
 frontend/dist/
 frontend/.vite/
 
+# 환경변수 / 비밀키
+.env
+.env.*
+!.env.example
+backend/.env
+
 # OS
 .DS_Store
 Thumbs.db
@@ -39,9 +45,8 @@ Thumbs.db
 # Excel output (generated files)
 schedule_*.xlsx
 
-# PyInstaller / 설치파일 빌드 산출물
+# PyInstaller / 설치파일 빌드 산출물 (.spec은 빌드 설정이라 추적함)
 backend/build/
 backend/dist/
 backend/installer/
-backend/*.spec
 frontend/tsconfig.tsbuildinfo

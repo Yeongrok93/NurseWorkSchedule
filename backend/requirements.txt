@@ -7,3 +7,5 @@ holidays==0.55
 pydantic==2.9.2
 python-multipart==0.0.12
 anthropic
+openai
+python-dotenv

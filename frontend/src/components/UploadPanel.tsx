@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { Nurse, GroupType } from '../types'
 import { GROUP_LABEL, GROUP_COLOR } from '../types'
-import { parseExcel } from '../utils/api'
+import { parseExcel, parseExcelAI } from '../utils/api'
 import { color, radius, chip, button } from '../theme'
 
 interface Props {
@@ -12,23 +12,38 @@ const GROUPS: GroupType[] = ['charge', 'leader', 'mid', 'junior', 'first']
 
 export default function UploadPanel({ onParsed }: Props) {
   const fileRef  = useRef<HTMLInputElement>(null)
-  const [state, setState] = useState<'idle'|'loading'|'preview'|'err'>('idle')
+  const [state, setState] = useState<'idle'|'loading'|'loading-ai'|'preview'|'err'>('idle')
   const [errMsg, setErrMsg] = useState('')
   const [dragging, setDragging] = useState(false)
   const [fileName, setFileName] = useState('')
   const [parsed,  setParsed]  = useState<Nurse[] | null>(null)
+  const [viaAI,   setViaAI]   = useState(false)
+  const [lastFile, setLastFile] = useState<File | null>(null)
 
   async function process(file: File) {
     if (!file.name.match(/\.(xlsx|xls)$/i)) {
       setState('err'); setErrMsg('xlsx 또는 xls 파일만 허용됩니다'); return
     }
-    setState('loading'); setErrMsg(''); setFileName(file.name)
+    setState('loading'); setErrMsg(''); setFileName(file.name); setLastFile(file); setViaAI(false)
     try {
       const { nurses } = await parseExcel(file)
       setParsed(nurses)
       setState('preview')
     } catch (e: any) {
       setState('err'); setErrMsg(e.message ?? '파싱 오류')
+    }
+  }
+
+  async function processWithAI() {
+    if (!lastFile) return
+    setState('loading-ai'); setErrMsg('')
+    try {
+      const { nurses } = await parseExcelAI(lastFile)
+      setParsed(nurses)
+      setViaAI(true)
+      setState('preview')
+    } catch (e: any) {
+      setState('err'); setErrMsg(e.message ?? 'AI 파싱 실패')
     }
   }
 
@@ -45,7 +60,7 @@ export default function UploadPanel({ onParsed }: Props) {
   }
 
   function reset() {
-    setState('idle'); setParsed(null); setFileName(''); setErrMsg('')
+    setState('idle'); setParsed(null); setFileName(''); setErrMsg(''); setViaAI(false); setLastFile(null)
   }
 
   // ── 파싱 확인 단계 (Airtable 임포트 미리보기 패턴) ──
@@ -63,11 +78,17 @@ export default function UploadPanel({ onParsed }: Props) {
         border: `1px solid ${color.border}`, borderRadius: radius.lg,
         background: color.bg, overflow: 'hidden',
       }}>
-        <div style={{ padding: '14px 16px 12px', borderBottom: `1px solid ${color.border}` }}>
-          <div style={{ fontSize: 12, color: color.textSecondary, marginBottom: 2 }}>파싱 완료</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: color.text }}>
-            📄 {fileName}
+        <div style={{ padding: '14px 16px 12px', borderBottom: `1px solid ${color.border}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: 12, color: color.textSecondary, marginBottom: 2 }}>파싱 완료</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: color.text }}>
+              📄 {fileName}
+            </div>
           </div>
+          {viaAI && (
+            <span style={chip(color.purpleBg, color.purpleStrong)}>✨ AI로 인식</span>
+          )}
         </div>
 
         <div style={{ padding: '14px 16px' }}>
@@ -148,11 +169,13 @@ export default function UploadPanel({ onParsed }: Props) {
       <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={onFileChange} />
 
       <div style={{ fontSize: 28, marginBottom: 8 }}>
-        {state === 'loading' ? '⏳' : state === 'err' ? '❌' : '📂'}
+        {state === 'loading' || state === 'loading-ai' ? '⏳' : state === 'err' ? '❌' : '📂'}
       </div>
 
-      {state === 'loading' ? (
-        <div style={{ fontSize: 13, color: color.accent, fontWeight: 600 }}>파싱 중...</div>
+      {state === 'loading' || state === 'loading-ai' ? (
+        <div style={{ fontSize: 13, color: color.accent, fontWeight: 600 }}>
+          {state === 'loading-ai' ? 'AI가 형식을 분석하는 중... (10~20초)' : '파싱 중...'}
+        </div>
       ) : (
         <>
           <div style={{ fontSize: 13, fontWeight: 700, color: color.text, marginBottom: 4 }}>
@@ -172,8 +195,18 @@ export default function UploadPanel({ onParsed }: Props) {
       )}
 
       {state === 'err' && errMsg && (
-        <div style={{ marginTop: 10, fontSize: 13, fontWeight: 600, color: color.dangerStrong }}>
-          ❌ {errMsg}
+        <div style={{ marginTop: 10 }} onClick={e => e.stopPropagation()}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: color.dangerStrong }}>
+            ❌ {errMsg}
+          </div>
+          {lastFile && (
+            <button onClick={processWithAI} style={button('secondary', {
+              marginTop: 8, padding: '8px 14px', fontSize: 12.5,
+              background: color.purpleBg, color: color.purpleStrong,
+            })}>
+              ✨ AI로 형식 인식 시도
+            </button>
+          )}
         </div>
       )}
     </div>

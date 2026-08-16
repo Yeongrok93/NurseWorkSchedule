@@ -17,13 +17,26 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import holidays
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+# backend/.env (개발) 또는 exe 옆의 .env (배포) → OPENAI_API_KEY 등. 없어도 앱은 정상 동작.
+for _env_dir in (
+    os.path.dirname(os.path.abspath(__file__)),                       # backend/ (개발)
+    os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else None,  # exe 옆 (배포)
+):
+    if _env_dir:
+        _env_path = os.path.join(_env_dir, ".env")
+        if os.path.isfile(_env_path):
+            load_dotenv(_env_path)
+            break
+
 from excel_parser import parse_nurse_excel, parse_prev_month_schedule
+from ai_excel_parser import parse_excel_with_ai
 from excel_export import build_excel
 from note_parser import interpret_notes, apply_interpretation
 from infeasibility_analyzer import analyze as analyze_infeasibility
@@ -188,6 +201,26 @@ async def parse_excel(file: UploadFile = File(...)):
         return {"nurses": nurses, "count": len(nurses)}
     except Exception as e:
         raise HTTPException(422, f"파싱 오류: {e}")
+
+
+@app.post("/parse-excel-ai")
+async def parse_excel_ai(file: UploadFile = File(...)):
+    """규칙 기반 파서가 실패한 낯선 양식을 OpenAI로 해석해 간호사 목록으로 변환.
+    서버에 OPENAI_API_KEY가 설정돼 있어야 한다 (backend/.env)."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(400, "서버에 OpenAI API 키가 설정되지 않았습니다 (backend/.env에 OPENAI_API_KEY 추가 필요)")
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "xlsx 또는 xls 파일만 허용됩니다")
+    content = await file.read()
+    loop = asyncio.get_event_loop()
+    try:
+        nurses = await loop.run_in_executor(
+            None, lambda: parse_excel_with_ai(io.BytesIO(content), api_key)
+        )
+        return {"nurses": nurses, "count": len(nurses)}
+    except Exception as e:
+        raise HTTPException(422, f"AI 파싱 오류: {e}")
 
 
 @app.post("/parse-prev-month")

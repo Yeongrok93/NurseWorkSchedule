@@ -114,6 +114,15 @@ export async function applyNotes(
   return (await res.json()).nurses
 }
 
+/** 규칙 기반 파서가 실패했을 때 AI(OpenAI)로 재시도. 서버에 키가 없으면 400. */
+export async function parseExcelAI(file: File): Promise<{ nurses: Nurse[]; count: number }> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${BASE}/parse-excel-ai`, { method: 'POST', body: fd })
+  if (!res.ok) throw new Error((await res.json()).detail ?? 'AI 파싱 실패')
+  return res.json()
+}
+
 export async function parsePrevMonth(file: File, carryDays = 7): Promise<PrevMonthResult> {
   const fd = new FormData()
   fd.append('file', file)
